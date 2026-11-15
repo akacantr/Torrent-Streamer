@@ -1,4 +1,4 @@
-import { SurroundAudioEngine } from './audio-engine.js?v=20261115c';
+import { SurroundAudioEngine } from './audio-engine.js?v=20261115d';
 
 const CHANNELS = ['L', 'C', 'R', 'LS', 'RS', 'LFE'];
 
@@ -1021,6 +1021,7 @@ async function selectAndPlayFile(fileIndex, expectedSeq = state.loadSeq) {
   renderFilesList();
 
   // 1) Selective download: lock torrent piece priorities to ONLY this file (+ subtitles)
+  saveLastSession();
   setLoading(true, 'Seçili dosya indirime hazırlanıyor...');
   try {
     await fetch(
@@ -2779,6 +2780,53 @@ function bindEvents() {
 // Initialization & URL Parameters (?magnet=...&embed=1)
 // ============================================================================
 
+function saveLastSession() {
+  if (!state.infoHash || !state.magnetUri) return;
+  try {
+    localStorage.setItem(
+      'ts_last_session',
+      JSON.stringify({
+        infoHash: state.infoHash,
+        magnetUri: state.magnetUri,
+        fileIndex: state.activeFileIndex,
+        savedAt: Date.now(),
+      }),
+    );
+  } catch (_) {
+    // Ignore storage quota/privacy mode errors
+  }
+}
+
+async function tryRestoreLastSession() {
+  let raw = null;
+  try {
+    raw = localStorage.getItem('ts_last_session');
+  } catch (_) {
+    return;
+  }
+  if (!raw) return;
+
+  try {
+    const saved = JSON.parse(raw);
+    if (!saved?.infoHash || !saved?.magnetUri) return;
+
+    const statusRes = await fetch(`/api/torrent/${encodeURIComponent(saved.infoHash)}/status`);
+    if (!statusRes.ok) {
+      localStorage.removeItem('ts_last_session');
+      return;
+    }
+
+    if (typeof saved.fileIndex === 'number' && saved.fileIndex >= 0) {
+      state.requestedFileIndex = saved.fileIndex;
+    }
+    if (el.magnetInput) el.magnetInput.value = saved.magnetUri;
+    await addTorrent({ magnet: saved.magnetUri });
+    showToast('Önceki indirme oturumu kaldığı yerden devam ediyor');
+  } catch (_) {
+    // Ignore restore failure
+  }
+}
+
 function init() {
   initPieceMapSegments();
   setupFpsTracker();
@@ -2809,6 +2857,8 @@ function init() {
     if (el.magnetInput) el.magnetInput.value = cleanMagnet;
     if (el.embedMagnetInput) el.embedMagnetInput.value = cleanMagnet;
     void addTorrent({ magnet: cleanMagnet });
+  } else {
+    void tryRestoreLastSession();
   }
 }
 
