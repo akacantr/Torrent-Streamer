@@ -451,15 +451,19 @@ function updateTimeAndSeekUi(overrideTime = null) {
       // Ignore transient buffered errors
     }
   }
-  const effectiveUserPct =
-    typeof state.localDownloadRatio === 'number' && state.localDownloadRatio > 0
-      ? state.localDownloadRatio * 100
-      : bufPct;
-  state.clientBufferRatio = effectiveUserPct / 100;
+  const currentPulledRatio = Math.max(
+    state.maxUserPulledRatio || 0,
+    state.localDownloadRatio || 0,
+    bufPct / 100,
+  );
+  state.maxUserPulledRatio = currentPulledRatio;
+  state.clientBufferRatio = currentPulledRatio;
+  const effectiveUserPct = currentPulledRatio * 100;
   if (el.bufferedBar) el.bufferedBar.style.width = `${maxBufEndPct}%`;
   if (el.telClientBuffer) el.telClientBuffer.textContent = `${effectiveUserPct.toFixed(1)}%`;
   updateSourceReadinessBadges();
   updateSaveVideoButton();
+  saveFilePlaybackState(false);
 
   renderActiveSubtitleCue(current);
 }
@@ -505,6 +509,7 @@ function applyEngineSettings() {
     const p = chip.getAttribute('data-preset');
     chip.classList.toggle('active', p === state.audioPreset);
   }
+  saveUserSettings();
 }
 
 function updateAudioCapabilitiesUi() {
@@ -967,10 +972,12 @@ async function triggerSelectedVideoDownload() {
     }
 
     state.localDownloadRatio = 1;
+    state.maxUserPulledRatio = 1;
     state.clientBufferRatio = 1;
     if (el.telClientBuffer) el.telClientBuffer.textContent = '100.0%';
     updateSourceReadinessBadges();
     updateSaveVideoButton();
+    saveFilePlaybackState(true);
 
     const blob = new Blob(chunks);
     const blobUrl = URL.createObjectURL(blob);
@@ -1003,8 +1010,10 @@ async function selectAndPlayFile(fileIndex, expectedSeq = state.loadSeq) {
   state.activeFileIndex = fileIndex;
   state.selectedFileProgress = 0;
   state.selectedFileDone = false;
-  state.clientBufferRatio = 0;
-  state.localDownloadRatio = 0;
+  const savedFileState = loadFilePlaybackState(state.infoHash, fileIndex);
+  state.maxUserPulledRatio = Number(savedFileState?.maxUserPulledRatio) || 0;
+  state.localDownloadRatio = Number(savedFileState?.localDownloadRatio) || 0;
+  state.clientBufferRatio = Math.max(state.maxUserPulledRatio, state.localDownloadRatio);
   state.streamStartOffset = 0;
   state.audioTrack = 0;
   state.videoMode = 'copy';
@@ -1012,6 +1021,8 @@ async function selectAndPlayFile(fileIndex, expectedSeq = state.loadSeq) {
   state.virtualUpmix = false;
   if (el.toggleVirtualUpmix) el.toggleVirtualUpmix.checked = false;
   if (el.videoModeSelect) el.videoModeSelect.value = 'copy';
+  if (el.telClientBuffer) el.telClientBuffer.textContent = `${(state.clientBufferRatio * 100).toFixed(1)}%`;
+  updateSourceReadinessBadges();
   updateSaveVideoButton();
 
   const fileObj = state.files.find((f) => f.index === fileIndex);
@@ -1059,6 +1070,7 @@ async function selectAndPlayFile(fileIndex, expectedSeq = state.loadSeq) {
 
   populateAudioTracksUi();
   adaptControlsToAudioTrack({ autoSelectMode: true });
+  applySavedUserSettings();
   renderDetectedTechnologies();
   renderVideoHdrPanel();
 
@@ -1066,11 +1078,17 @@ async function selectAndPlayFile(fileIndex, expectedSeq = state.loadSeq) {
   void prepareSubtitlesBeforePlayback(fileIndex, expectedSeq);
   if (expectedSeq !== state.loadSeq) return;
 
-  // 4) Determine direct vs remux & start playback
+  // 4) Determine direct vs remux & start playback (resume from saved timestamp if available)
   state.streamMode = shouldUseDirectStream() ? 'direct' : 'remux';
   renderCodecBadges();
 
-  await loadPlaybackSource(0, true);
+  const dur = state.totalDuration || 0;
+  const savedTime = Number(savedFileState?.currentTime) || 0;
+  const resumeAt = savedTime > 3 && (dur <= 0 || savedTime < dur - 10) ? savedTime : 0;
+  if (resumeAt > 0) {
+    showToast(`Kaldığınız yerden devam ediliyor (${formatTime(resumeAt)})`);
+  }
+  await loadPlaybackSource(resumeAt, true);
 }
 
 async function prepareSubtitlesBeforePlayback(fileIndex, expectedSeq) {
@@ -2780,6 +2798,93 @@ function bindEvents() {
 // Initialization & URL Parameters (?magnet=...&embed=1)
 // ============================================================================
 
+let lastSavedProgressMs = 0;
+function saveFilePlaybackState(force = false) {
+  if (!state.infoHash || state.activeFileIndex === null) return;
+  const now = Date.now();
+  if (!force && now - lastSavedProgressMs < 2000) return;
+  lastSavedProgressMs = now;
+  try {
+    const key = `ts_file_${state.infoHash}_${state.activeFileIndex}`;
+    localStorage.setItem(
+      key,
+      JSON.stringify({
+        currentTime: getCurrentPlaybackTime(),
+        maxUserPulledRatio: state.maxUserPulledRatio || 0,
+        localDownloadRatio: state.localDownloadRatio || 0,
+        updatedAt: now,
+      }),
+    );
+  } catch (_) {
+    // Ignore storage errors
+  }
+}
+
+function loadFilePlaybackState(infoHash, fileIndex) {
+  if (!infoHash || fileIndex === null || fileIndex === undefined) return null;
+  try {
+    const raw = localStorage.getItem(`ts_file_${infoHash}_${fileIndex}`);
+    return raw ? JSON.parse(raw) : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function saveUserSettings() {
+  try {
+    localStorage.setItem(
+      'ts_user_settings',
+      JSON.stringify({
+        volume: el.video?.volume ?? 1,
+        muted: Boolean(el.video?.muted),
+        playbackRate: Number(el.speedSelect?.value || 1),
+        audioOutputKey: state.audioOutputKey,
+        audioPreset: state.audioPreset,
+        videoMode: state.videoMode,
+        virtualUpmix: state.virtualUpmix,
+        centerDb: Number(el.sliderCenterDb?.value ?? 0),
+        lfeDb: Number(el.sliderLfeDb?.value ?? 0),
+        surroundDb: Number(el.sliderSurroundDb?.value ?? 0),
+        masterGain: Number(el.sliderMasterGain?.value ?? 1),
+        nightMode: Boolean(el.toggleNightMode?.checked),
+      }),
+    );
+  } catch (_) {
+    // Ignore storage errors
+  }
+}
+
+function applySavedUserSettings() {
+  try {
+    const raw = localStorage.getItem('ts_user_settings');
+    if (!raw) return;
+    const s = JSON.parse(raw);
+    if (typeof s.volume === 'number' && el.video) el.video.volume = Math.max(0, Math.min(1, s.volume));
+    if (typeof s.muted === 'boolean' && el.video) el.video.muted = s.muted;
+    if (typeof s.playbackRate === 'number' && el.speedSelect) {
+      el.speedSelect.value = String(s.playbackRate);
+      if (el.video) el.video.playbackRate = s.playbackRate;
+    }
+    if (s.audioPreset) state.audioPreset = s.audioPreset;
+    if (s.videoMode && el.videoModeSelect) {
+      state.videoMode = s.videoMode;
+      el.videoModeSelect.value = s.videoMode;
+    }
+    if (typeof s.virtualUpmix === 'boolean' && el.toggleVirtualUpmix) {
+      state.virtualUpmix = s.virtualUpmix;
+      el.toggleVirtualUpmix.checked = s.virtualUpmix;
+    }
+    if (typeof s.centerDb === 'number' && el.sliderCenterDb) el.sliderCenterDb.value = String(s.centerDb);
+    if (typeof s.lfeDb === 'number' && el.sliderLfeDb) el.sliderLfeDb.value = String(s.lfeDb);
+    if (typeof s.surroundDb === 'number' && el.sliderSurroundDb) el.sliderSurroundDb.value = String(s.surroundDb);
+    if (typeof s.masterGain === 'number' && el.sliderMasterGain) el.sliderMasterGain.value = String(s.masterGain);
+    if (typeof s.nightMode === 'boolean' && el.toggleNightMode) el.toggleNightMode.checked = s.nightMode;
+    updateVolumeUi();
+  } catch (_) {
+    // Ignore storage errors
+  }
+}
+
 function saveLastSession() {
   if (!state.infoHash || !state.magnetUri) return;
   try {
@@ -2834,6 +2939,11 @@ function init() {
   startVisualizerLoop();
   populateAudioTracksUi();
   populateSubtitlesList();
+  applySavedUserSettings();
+  globalThis.addEventListener('beforeunload', () => {
+    saveFilePlaybackState(true);
+    saveUserSettings();
+  });
 
   const params = new URLSearchParams(globalThis.location.search);
   const embedParam = params.get('embed');
