@@ -2006,7 +2006,9 @@ async function handleTorrentAdd(req: Request): Promise<Response> {
     const existing = await client.get(torrentInput);
     if (existing && !existing.destroyed) {
       attachTorrentListeners(existing);
-      if (!existing.ready) {
+      if (existing.done) {
+        try { existing.pause?.(); } catch {}
+      } else if (!existing.ready) {
         await waitForTorrentReady(existing, 35_000);
         applyInitialSelection(existing);
       } else if (autoSelectMain && getTracker(existing.infoHash).selectedFileIndex === null) {

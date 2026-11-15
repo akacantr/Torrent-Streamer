@@ -517,9 +517,8 @@
     </div>
 
     <!-- Canlı Torrent Telemetri Çubuğu + Tek Tıkla İndirme -->
-    <section id="telemetry-bar" class="telemetry-bar" aria-label="Canlı Torrent Telemetrisi">
+    <section id="telemetry-bar" class="telemetry-bar" aria-label="Canlı Akış Durumu">
       <div class="telemetry-identity">
-        <span id="tel-status-dot" class="status-dot idle"></span>
         <div class="telemetry-name-wrap">
           <span id="tel-name" class="tel-name">Aktif akış yok</span>
           <span id="tel-infohash" class="tel-hash">Magnet veya .torrent yükleyin</span>
@@ -528,40 +527,23 @@
 
       <div class="telemetry-metrics">
         <div class="metric-cell">
-          <span class="metric-label">İndirme</span>
-          <span id="tel-down-speed" class="metric-value accent-cyan">0 KB/s</span>
-        </div>
-        <div class="metric-cell">
-          <span class="metric-label">Yükleme</span>
-          <span id="tel-up-speed" class="metric-value">0 KB/s</span>
-        </div>
-        <div class="metric-cell">
-          <span class="metric-label">Aktif Eşler</span>
-          <span id="tel-peers" class="metric-value">0</span>
-        </div>
-        <div class="metric-cell">
-          <span class="metric-label">Sunucu</span>
-          <span id="tel-progress" class="metric-value accent-emerald">0%</span>
-        </div>
-        <div class="metric-cell">
-          <span class="metric-label">Tarayıcı</span>
+          <span class="metric-label">Kullanıcı (Sunucudan)</span>
           <span id="tel-client-buffer" class="metric-value accent-cyan">0%</span>
         </div>
         <div class="metric-cell">
-          <span class="metric-label">Kalan Süre (ETA)</span>
-          <span id="tel-eta" class="metric-value">--</span>
+          <span class="metric-label">Sunucu (Torrentten)</span>
+          <span id="tel-progress" class="metric-value accent-emerald">0%</span>
         </div>
       </div>
 
       <div class="telemetry-right">
-        <div class="piece-legend" title="Torrent parça haritası durumu">
-          <span class="legend-item"><i class="lg-dot lg-done"></i> İndirildi</span>
-          <span class="legend-item"><i class="lg-dot lg-active"></i> Öncelikli</span>
-          <span class="legend-item"><i class="lg-dot lg-missing"></i> Bekliyor</span>
+        <div class="piece-legend" title="Yerel ve Sunucu Hazırlık Durumu">
+          <span id="badge-local-status" class="legend-item"><i class="lg-dot lg-active"></i> Yerel: Bekleniyor</span>
+          <span id="badge-server-status" class="legend-item"><i class="lg-dot lg-done"></i> Sunucu: Bekleniyor</span>
         </div>
 
         <button id="btn-save-video" class="btn btn-save-video" type="button" disabled>
-          ⏳ Dosya Bekleniyor
+          ⏳ Yerel Kayıt Bekleniyor
         </button>
       </div>
     </section>

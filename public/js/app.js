@@ -164,15 +164,12 @@ const el = {
   torrentFilesList: document.getElementById('torrent-files-list'),
   drawerFilesSummary: document.getElementById('drawer-files-summary'),
 
-  telStatusDot: document.getElementById('tel-status-dot'),
   telName: document.getElementById('tel-name'),
   telInfohash: document.getElementById('tel-infohash'),
-  telDownSpeed: document.getElementById('tel-down-speed'),
-  telUpSpeed: document.getElementById('tel-up-speed'),
-  telPeers: document.getElementById('tel-peers'),
   telProgress: document.getElementById('tel-progress'),
   telClientBuffer: document.getElementById('tel-client-buffer'),
-  telEta: document.getElementById('tel-eta'),
+  badgeLocalStatus: document.getElementById('badge-local-status'),
+  badgeServerStatus: document.getElementById('badge-server-status'),
   btnSaveVideo: /** @type {HTMLButtonElement | null} */ (document.getElementById('btn-save-video')),
 
   embedModal: document.getElementById('embed-modal'),
@@ -207,6 +204,7 @@ const state = {
   activeFileIndex: null,
   selectedFileProgress: 0,
   selectedFileDone: false,
+  clientBufferRatio: 0,
   lastTelemetry: null,
   probeData: null,
 
@@ -447,8 +445,11 @@ function updateTimeAndSeekUi(overrideTime = null) {
       // Ignore transient buffered errors
     }
   }
+  state.clientBufferRatio = bufPct / 100;
   if (el.bufferedBar) el.bufferedBar.style.width = `${bufPct}%`;
   if (el.telClientBuffer) el.telClientBuffer.textContent = `${bufPct.toFixed(1)}%`;
+  updateSourceReadinessBadges();
+  updateSaveVideoButton();
 
   renderActiveSubtitleCue(current);
 }
@@ -831,23 +832,41 @@ function updateTelemetry(st) {
       : Math.max(0, Math.min(1, st.progress || 0));
   const pct = displayProgress * 100;
 
-  if (el.telDownSpeed) el.telDownSpeed.textContent = formatSpeed(st.downloadSpeed || 0);
-  if (el.telUpSpeed) el.telUpSpeed.textContent = formatSpeed(st.uploadSpeed || 0);
-  if (el.telPeers) el.telPeers.textContent = String(st.numPeers ?? 0);
   if (el.telProgress) {
     el.telProgress.textContent =
       state.activeFileIndex === null && state.files.some((f) => f.isVideo)
         ? 'Seçim Bekleniyor'
-        : `${pct.toFixed(1)}%`;
-  }
-  if (el.telEta) el.telEta.textContent = formatEta(st.timeRemaining, displayProgress);
-
-  if (el.telStatusDot) {
-    el.telStatusDot.className =
-      pct >= 99.9 ? 'status-dot ready' : st.ready ? 'status-dot downloading' : 'status-dot idle';
+        : state.selectedFileDone || pct >= 99.9
+          ? 'Hazır (%100)'
+          : `${pct.toFixed(1)}%`;
   }
 
+  updateSourceReadinessBadges();
   updateSaveVideoButton();
+}
+
+function updateSourceReadinessBadges() {
+  if (el.badgeLocalStatus) {
+    const localPct = (state.clientBufferRatio * 100).toFixed(0);
+    if (!state.infoHash || state.activeFileIndex === null) {
+      el.badgeLocalStatus.innerHTML = '<i class="lg-dot lg-missing"></i> Yerel: Bekleniyor';
+    } else if (state.clientBufferRatio >= 0.99 || el.video.readyState >= 3) {
+      el.badgeLocalStatus.innerHTML = `<i class="lg-dot lg-done"></i> Yerel: Hazır (%${localPct})`;
+    } else {
+      el.badgeLocalStatus.innerHTML = `<i class="lg-dot lg-active"></i> Yerel: Tampon (%${localPct})`;
+    }
+  }
+
+  if (el.badgeServerStatus) {
+    const srvPct = (state.selectedFileProgress * 100).toFixed(0);
+    if (!state.infoHash || state.activeFileIndex === null) {
+      el.badgeServerStatus.innerHTML = '<i class="lg-dot lg-missing"></i> Sunucu: Bekleniyor';
+    } else if (state.selectedFileDone || state.selectedFileProgress >= 0.999) {
+      el.badgeServerStatus.innerHTML = '<i class="lg-dot lg-done"></i> Sunucu: Hazır (%100)';
+    } else {
+      el.badgeServerStatus.innerHTML = `<i class="lg-dot lg-active"></i> Sunucu: Torrentten (%${srvPct})`;
+    }
+  }
 }
 
 function updateSaveVideoButton() {
@@ -857,19 +876,19 @@ function updateSaveVideoButton() {
   if (!state.infoHash || state.activeFileIndex === null) {
     btn.disabled = true;
     btn.classList.remove('ready');
-    btn.textContent = '⏳ Dosya Bekleniyor';
+    btn.textContent = '⏳ Yerel Kayıt Bekleniyor';
     return;
   }
 
+  const localPct = (state.clientBufferRatio * 100).toFixed(0);
   if (state.selectedFileDone || state.selectedFileProgress >= 0.999) {
     btn.disabled = false;
     btn.classList.add('ready');
-    btn.textContent = '⬇ Videoyu Kaydet (Tamamlandı)';
+    btn.textContent = `⬇ Cihaza Kaydet (Yerel %${localPct})`;
   } else {
     btn.disabled = true;
     btn.classList.remove('ready');
-    const pct = (state.selectedFileProgress * 100).toFixed(1);
-    btn.textContent = `⏳ Dosya İniyor (%${pct})`;
+    btn.textContent = `⏳ Yerel Tampon (%${localPct})`;
   }
 }
 
