@@ -1,4 +1,4 @@
-import { SurroundAudioEngine } from './audio-engine.js';
+import { SurroundAudioEngine } from './audio-engine.js?v=20261115b';
 
 const CHANNELS = ['L', 'C', 'R', 'LS', 'RS', 'LFE'];
 
@@ -569,6 +569,21 @@ function resetVideoCssFilters() {
 // Torrent Management, Selective File Picker & 1-Click Download
 // ============================================================================
 
+async function readJsonSafe(res) {
+  const text = await res.text();
+  try {
+    return JSON.parse(text);
+  } catch (_) {
+    if (res.status === 502 || res.status === 503) {
+      throw new Error(`Sunucuya şu an ulaşılamıyor (HTTP ${res.status}). Konteyner yeniden başlıyor olabilir, birkaç saniye sonra tekrar deneyin.`);
+    }
+    if (res.status === 504 || res.status === 524) {
+      throw new Error(`Sunucu yanıt süresi doldu (HTTP ${res.status}). Torrent eşlerine ulaşılamıyor olabilir.`);
+    }
+    throw new Error(`Sunucu beklenmeyen bir yanıt döndürdü (HTTP ${res.status}).`);
+  }
+}
+
 async function addTorrent(payload) {
   const seq = ++state.loadSeq;
   showInputError('');
@@ -582,7 +597,7 @@ async function addTorrent(payload) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-    const data = await res.json();
+    const data = await readJsonSafe(res);
     if (!res.ok) {
       throw new Error(data?.error || `Sunucu hatası (${res.status})`);
     }
@@ -615,7 +630,7 @@ async function startDemoSample() {
 
   try {
     const res = await fetch('/api/demo/sample', { method: 'POST' });
-    const data = await res.json();
+    const data = await readJsonSafe(res);
     if (!res.ok) {
       throw new Error(data?.error || `Demo akışı başlatılamadı (${res.status})`);
     }
@@ -957,7 +972,7 @@ async function selectAndPlayFile(fileIndex, expectedSeq = state.loadSeq) {
         `/api/torrent/${encodeURIComponent(state.infoHash)}/probe/${fileIndex}`,
       );
       if (res.ok) {
-        probe = await res.json();
+        probe = await readJsonSafe(res);
         break;
       }
     } catch (_) {
@@ -1002,7 +1017,7 @@ async function prepareSubtitlesBeforePlayback(fileIndex, expectedSeq) {
       populateSubtitlesList();
       return;
     }
-    const data = await res.json();
+    const data = await readJsonSafe(res);
     if (expectedSeq !== state.loadSeq) return;
 
     const rawSubs = Array.isArray(data?.subtitles) ? data.subtitles : [];
