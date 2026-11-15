@@ -105,6 +105,8 @@ const el = {
   subtitleMenuList: document.getElementById('subtitle-menu-list'),
   btnMenuUploadSub: document.getElementById('btn-menu-upload-sub'),
   btnMenuSearchSub: document.getElementById('btn-menu-search-sub'),
+  btnPlayerSettings: document.getElementById('btn-player-settings'),
+  settingsMenu: document.getElementById('settings-menu'),
   btnStats: document.getElementById('btn-stats'),
   btnToggleStudio: document.getElementById('btn-toggle-studio'),
   btnToggleFiles: document.getElementById('btn-toggle-files'),
@@ -2970,7 +2972,14 @@ function bindEvents() {
     });
   }
 
-  // Bottom bar popovers (Audio Track & Subtitles)
+  // Bottom bar popovers (Settings, Audio Track & Subtitles)
+  el.btnPlayerSettings?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    el.subtitleMenu?.classList.add('hidden');
+    el.audioTrackMenu?.classList.add('hidden');
+    el.settingsMenu?.classList.toggle('hidden');
+  });
+
   el.btnAudioTracks?.addEventListener('click', (e) => {
     e.stopPropagation();
     el.subtitleMenu?.classList.add('hidden');
@@ -2979,12 +2988,27 @@ function bindEvents() {
 
   el.btnSubtitles?.addEventListener('click', (e) => {
     e.stopPropagation();
+    el.settingsMenu?.classList.add('hidden');
     el.audioTrackMenu?.classList.add('hidden');
     el.subtitleMenu?.classList.toggle('hidden');
   });
 
+  el.btnToggleStudio?.addEventListener('click', () => el.settingsMenu?.classList.add('hidden'));
+  el.btnToggleFiles?.addEventListener('click', () => el.settingsMenu?.classList.add('hidden'));
+  el.btnStats?.addEventListener('click', () => el.settingsMenu?.classList.add('hidden'));
+
   document.addEventListener('click', (e) => {
     const target = /** @type {Node | null} */ (e.target);
+    if (
+      el.settingsMenu &&
+      !el.settingsMenu.classList.contains('hidden') &&
+      target &&
+      !el.settingsMenu.contains(target) &&
+      !el.btnPlayerSettings?.contains(target)
+    ) {
+      el.settingsMenu.classList.add('hidden');
+      el.audioTrackMenu?.classList.add('hidden');
+    }
     if (
       el.subtitleMenu &&
       !el.subtitleMenu.classList.contains('hidden') &&

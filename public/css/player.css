@@ -2289,3 +2289,33 @@ body.embed-mode .cinema-drawer,
   font-size: 0.75rem;
   color: #a3a3a3;
 }
+
+.settings-popover {
+  min-width: 245px;
+  right: 0;
+  left: auto;
+}
+
+.settings-menu-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 8px;
+  margin-bottom: 4px;
+}
+
+.settings-menu-label {
+  font-size: 0.82rem;
+  color: #d4d4d4;
+}
+
+.settings-subwrap {
+  width: 100%;
+}
+
+.settings-subwrap > #audio-track-menu {
+  bottom: 0;
+  right: calc(100% + 8px);
+  left: auto;
+}

@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/css/player.css?v=20261115h" />
+  <link rel="stylesheet" href="/css/player.css?v=20261115j" />
   <link rel="stylesheet" href="/css/app-theme.css?v=20261115f" />
 </head>
 <body class="cinema-app">
@@ -211,28 +211,6 @@
             </div>
 
             <div class="controls-right">
-              <label class="speed-wrap" title="Oynatma Hızı">
-                <select id="speed-select" class="ctrl-select" aria-label="Oynatma hızı">
-                  <option value="0.5">0.5x</option>
-                  <option value="0.75">0.75x</option>
-                  <option value="1" selected>1x</option>
-                  <option value="1.25">1.25x</option>
-                  <option value="1.5">1.5x</option>
-                  <option value="2">2x</option>
-                </select>
-              </label>
-
-              <!-- Tek Tıkla Ses İzi Değiştirici -->
-              <div class="popover-ctrl-wrap">
-                <button id="btn-audio-tracks" class="ctrl-btn ctrl-btn-text" type="button" title="Ses İzi Değiştir">
-                  🎧 Ses İzi
-                </button>
-                <div id="audio-track-menu" class="ctrl-popover hidden">
-                  <div class="popover-header">Ses İzi Seçimi</div>
-                  <div id="audio-track-menu-list" class="popover-list"></div>
-                </div>
-              </div>
-
               <!-- Tek Tıkla Altyazı Değiştirici -->
               <div class="popover-ctrl-wrap">
                 <button id="btn-subtitles" class="ctrl-btn ctrl-btn-text" type="button" title="Altyazılar">
@@ -248,17 +226,46 @@
                 </div>
               </div>
 
-              <button id="btn-stats" class="ctrl-btn ctrl-btn-text" type="button" title="Canlı Oynatma İstatistikleri (I)">
-                📊 İstatistikler
-              </button>
+              <!-- Sağ Alt Birleşik Ayarlar Menüsü -->
+              <div class="popover-ctrl-wrap">
+                <button id="btn-player-settings" class="ctrl-btn ctrl-btn-text" type="button" title="Oynatıcı Ayarları">
+                  ⚙ Ayarlar
+                </button>
+                <div id="settings-menu" class="ctrl-popover settings-popover hidden">
+                  <div class="popover-header">Oynatıcı Ayarları</div>
+                  <div class="settings-menu-row">
+                    <span class="settings-menu-label">Oynatma Hızı</span>
+                    <select id="speed-select" class="ctrl-select" aria-label="Oynatma hızı">
+                      <option value="0.5">0.5x</option>
+                      <option value="0.75">0.75x</option>
+                      <option value="1" selected>1x</option>
+                      <option value="1.25">1.25x</option>
+                      <option value="1.5">1.5x</option>
+                      <option value="2">2x</option>
+                    </select>
+                  </div>
 
-              <button id="btn-toggle-studio" class="ctrl-btn ctrl-btn-text" type="button" title="Medya ve Ses Ayarları (S)">
-                ⚙ Medya &amp; Ses Ayarları
-              </button>
+                  <div class="popover-ctrl-wrap settings-subwrap">
+                    <button id="btn-audio-tracks" class="sub-item" type="button" title="Ses İzi Değiştir">
+                      🎧 Ses İzi Seçimi ▸
+                    </button>
+                    <div id="audio-track-menu" class="ctrl-popover hidden">
+                      <div class="popover-header">Ses İzi Seçimi</div>
+                      <div id="audio-track-menu-list" class="popover-list"></div>
+                    </div>
+                  </div>
 
-              <button id="btn-toggle-files" class="ctrl-btn ctrl-btn-text" type="button" title="Torrent Dosyaları">
-                Dosyalar
-              </button>
+                  <button id="btn-toggle-studio" class="sub-item" type="button" title="Medya ve Ses Ayarları (S)">
+                    🎛 Medya &amp; Ses Stüdyosu
+                  </button>
+                  <button id="btn-toggle-files" class="sub-item" type="button" title="Torrent Dosyaları">
+                    📁 Torrent Dosyaları
+                  </button>
+                  <button id="btn-stats" class="sub-item" type="button" title="Canlı Oynatma İstatistikleri (I)">
+                    📊 Canlı İstatistikler
+                  </button>
+                </div>
+              </div>
 
               <button id="btn-pip" class="ctrl-btn" type="button" title="Resim İçinde Resim (PiP)" aria-label="Resim İçinde Resim">
                 <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 7h-8v6h8V7zm2-4H3c-1.1 0-2 .9-2 2v14c0 1.1.9 1.98 2 1.98h18c1.1 0 2-.88 2-1.98V5c0-1.1-.9-2-2-2zm0 16.01H3V4.98h18v14.03z" /></svg>
@@ -589,6 +596,6 @@
   </div>
 
   <script src="/js/app-theme.js?v=20261115f" defer></script>
-  <script type="module" src="/js/app.js?v=20261115i"></script>
+  <script type="module" src="/js/app.js?v=20261115j"></script>
 </body>
 </html>
