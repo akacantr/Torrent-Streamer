@@ -1289,10 +1289,13 @@ async function handlePlayRequest(
     : "surround51";
 
   const rawVideoMode = url.searchParams.get("videoMode") || "copy";
+  const rawQuality = (url.searchParams.get("quality") || "native").trim();
+  const ALLOWED_QUALITIES = new Set(["144", "240", "360", "480", "720", "1080", "1440", "2160", "4320"]);
+  const targetHeight = ALLOWED_QUALITIES.has(rawQuality) ? Number(rawQuality) : null;
   const rawBurnSub = url.searchParams.get("burnSub");
   const burnSubParsed = rawBurnSub !== null && rawBurnSub !== "" ? Number.parseInt(rawBurnSub, 10) : NaN;
   const burnSub = Number.isInteger(burnSubParsed) && burnSubParsed >= 0 ? burnSubParsed : null;
-  const videoMode = rawVideoMode === "transcode" || burnSub !== null ? "transcode" : "copy";
+  const videoMode = rawVideoMode === "transcode" || burnSub !== null || targetHeight !== null ? "transcode" : "copy";
 
   const rawStart = Number(url.searchParams.get("start") ?? "0");
   const startSec = Number.isFinite(rawStart) && rawStart > 0 ? rawStart : 0;
@@ -1332,14 +1335,18 @@ async function handlePlayRequest(
   );
 
   if (burnSub !== null) {
+    const scaleChain = targetHeight !== null ? `,scale=-2:${targetHeight}` : "";
     args.push(
       "-filter_complex",
-      `[0:v:0][0:s:${burnSub}]overlay=eof_action=pass,format=yuv420p[vout]`,
+      `[0:v:0][0:s:${burnSub}]overlay=eof_action=pass${scaleChain},format=yuv420p[vout]`,
       "-map",
       "[vout]",
     );
   } else {
     args.push("-map", "0:v:0");
+    if (targetHeight !== null) {
+      args.push("-vf", `scale=-2:${targetHeight}`);
+    }
   }
 
   args.push(

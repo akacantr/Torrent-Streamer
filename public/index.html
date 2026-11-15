@@ -228,11 +228,26 @@
 
               <!-- Sağ Alt Birleşik Ayarlar Menüsü -->
               <div class="popover-ctrl-wrap">
-                <button id="btn-player-settings" class="ctrl-btn ctrl-btn-text" type="button" title="Oynatıcı Ayarları">
-                  ⚙ Ayarlar
+                <button id="btn-player-settings" class="ctrl-btn" type="button" title="Ayarlar" aria-label="Ayarlar">
+                  <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 1 1 15.6 12 3.6 3.6 0 0 1 12 15.6z" /></svg>
                 </button>
                 <div id="settings-menu" class="ctrl-popover settings-popover hidden">
                   <div class="popover-header">Oynatıcı Ayarları</div>
+                  <div class="settings-menu-row">
+                    <span class="settings-menu-label">Kalite</span>
+                    <select id="quality-select" class="ctrl-select" aria-label="Video kalitesi">
+                      <option value="native" selected>Orijinal</option>
+                      <option value="144">144p</option>
+                      <option value="240">240p</option>
+                      <option value="360">360p</option>
+                      <option value="480">480p</option>
+                      <option value="720">720p</option>
+                      <option value="1080">1080p</option>
+                      <option value="1440">2K</option>
+                      <option value="2160">4K</option>
+                      <option value="4320">8K</option>
+                    </select>
+                  </div>
                   <div class="settings-menu-row">
                     <span class="settings-menu-label">Oynatma Hızı</span>
                     <select id="speed-select" class="ctrl-select" aria-label="Oynatma hızı">
@@ -596,6 +611,6 @@
   </div>
 
   <script src="/js/app-theme.js?v=20261115f" defer></script>
-  <script type="module" src="/js/app.js?v=20261115k"></script>
+  <script type="module" src="/js/app.js?v=20261115l"></script>
 </body>
 </html>

@@ -107,6 +107,7 @@ const el = {
   btnMenuSearchSub: document.getElementById('btn-menu-search-sub'),
   btnPlayerSettings: document.getElementById('btn-player-settings'),
   settingsMenu: document.getElementById('settings-menu'),
+  qualitySelect: /** @type {HTMLSelectElement | null} */ (document.getElementById('quality-select')),
   btnStats: document.getElementById('btn-stats'),
   btnToggleStudio: document.getElementById('btn-toggle-studio'),
   btnToggleFiles: document.getElementById('btn-toggle-files'),
@@ -223,6 +224,7 @@ const state = {
 
   streamMode: 'remux', // 'direct' | 'remux'
   videoMode: 'copy', // 'copy' | 'transcode'
+  quality: 'native', // 'native' | '144' | '240' | '360' | '480' | '720' | '1080' | '1440' | '2160' | '4320'
   burnSubOrder: null,
   audioOutputKey: 'stereo', // 'stereo' | 'cinema51' | 'atmos' | 'passthrough'
   audioMode: 'stereo', // 'stereo' | 'surround51' | 'passthrough'
@@ -1510,6 +1512,7 @@ function renderCodecBadges() {
 function shouldUseDirectStream() {
   if (!state.probeData || state.activeFileIndex === null) return false;
   if (state.videoMode === 'transcode') return false;
+  if (state.quality && state.quality !== 'native') return false;
   if (state.burnSubOrder !== null && state.burnSubOrder !== undefined) return false;
   if (state.audioMode === 'passthrough') return false;
   if (state.audioTrack !== 0) return false;
@@ -1558,6 +1561,9 @@ function buildStreamUrl(startSec = 0) {
   });
   if (state.burnSubOrder !== null && state.burnSubOrder !== undefined) {
     params.set('burnSub', String(state.burnSubOrder));
+  }
+  if (state.quality && state.quality !== 'native') {
+    params.set('quality', state.quality);
   }
   return `/api/play/${hash}/${idx}?${params.toString()}`;
 }
@@ -2948,6 +2954,18 @@ function bindEvents() {
     }
   });
 
+  el.qualitySelect?.addEventListener('change', () => {
+    state.quality = el.qualitySelect?.value || 'native';
+    saveUserSettings();
+    const labelMap = { native: 'Orijinal', 1440: '2K', 2160: '4K', 4320: '8K' };
+    const label = labelMap[state.quality] || `${state.quality}p`;
+    showToast(`Kalite: ${label}`);
+    el.settingsMenu?.classList.add('hidden');
+    if (state.infoHash) {
+      switchStreamParameterAndReload();
+    }
+  });
+
   const bindGainSlider = (sliderEl, readoutEl, formatter) => {
     sliderEl?.addEventListener('input', () => {
       if (readoutEl) readoutEl.textContent = formatter(Number(sliderEl.value));
@@ -3184,6 +3202,7 @@ function saveUserSettings() {
         audioOutputKey: state.audioOutputKey,
         audioPreset: state.audioPreset,
         videoMode: state.videoMode,
+        quality: state.quality,
         virtualUpmix: state.virtualUpmix,
         centerDb: Number(el.sliderCenterDb?.value ?? 0),
         lfeDb: Number(el.sliderLfeDb?.value ?? 0),
@@ -3213,6 +3232,10 @@ function applySavedUserSettings() {
     if (s.videoMode && el.videoModeSelect) {
       state.videoMode = s.videoMode;
       el.videoModeSelect.value = s.videoMode;
+    }
+    if (s.quality && el.qualitySelect) {
+      state.quality = s.quality;
+      el.qualitySelect.value = s.quality;
     }
     if (typeof s.virtualUpmix === 'boolean' && el.toggleVirtualUpmix) {
       state.virtualUpmix = s.virtualUpmix;
