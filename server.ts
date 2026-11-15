@@ -1289,7 +1289,10 @@ async function handlePlayRequest(
     : "surround51";
 
   const rawVideoMode = url.searchParams.get("videoMode") || "copy";
-  const videoMode = rawVideoMode === "transcode" ? "transcode" : "copy";
+  const rawBurnSub = url.searchParams.get("burnSub");
+  const burnSubParsed = rawBurnSub !== null && rawBurnSub !== "" ? Number.parseInt(rawBurnSub, 10) : NaN;
+  const burnSub = Number.isInteger(burnSubParsed) && burnSubParsed >= 0 ? burnSubParsed : null;
+  const videoMode = rawVideoMode === "transcode" || burnSub !== null ? "transcode" : "copy";
 
   const rawStart = Number(url.searchParams.get("start") ?? "0");
   const startSec = Number.isFinite(rawStart) && rawStart > 0 ? rawStart : 0;
@@ -1326,8 +1329,20 @@ async function handlePlayRequest(
   args.push(
     "-i",
     streamUrl,
-    "-map",
-    "0:v:0",
+  );
+
+  if (burnSub !== null) {
+    args.push(
+      "-filter_complex",
+      `[0:v:0][0:s:${burnSub}]overlay=eof_action=pass,format=yuv420p[vout]`,
+      "-map",
+      "[vout]",
+    );
+  } else {
+    args.push("-map", "0:v:0");
+  }
+
+  args.push(
     "-map",
     `0:a:${audioTrack}?`,
     "-avoid_negative_ts",
@@ -1335,7 +1350,8 @@ async function handlePlayRequest(
   );
 
   if (videoMode === "transcode") {
-    args.push("-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency", "-crf", "22", "-pix_fmt", "yuv420p");
+    args.push("-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency", "-crf", "22");
+    if (burnSub === null) args.push("-pix_fmt", "yuv420p");
   } else {
     args.push("-c:v", "copy");
   }

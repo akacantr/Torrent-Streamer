@@ -223,6 +223,7 @@ const state = {
 
   streamMode: 'remux', // 'direct' | 'remux'
   videoMode: 'copy', // 'copy' | 'transcode'
+  burnSubOrder: null,
   audioOutputKey: 'stereo', // 'stereo' | 'cinema51' | 'atmos' | 'passthrough'
   audioMode: 'stereo', // 'stereo' | 'surround51' | 'passthrough'
   audioPreset: 'stereo', // 'stereo' | 'atmos' | 'cinema51' | 'dialogue' | 'passthrough'
@@ -1509,6 +1510,7 @@ function renderCodecBadges() {
 function shouldUseDirectStream() {
   if (!state.probeData || state.activeFileIndex === null) return false;
   if (state.videoMode === 'transcode') return false;
+  if (state.burnSubOrder !== null && state.burnSubOrder !== undefined) return false;
   if (state.audioMode === 'passthrough') return false;
   if (state.audioTrack !== 0) return false;
 
@@ -1554,6 +1556,9 @@ function buildStreamUrl(startSec = 0) {
     videoMode: state.videoMode,
     start: String(Math.max(0, Number(startSec.toFixed(3)))),
   });
+  if (state.burnSubOrder !== null && state.burnSubOrder !== undefined) {
+    params.set('burnSub', String(state.burnSubOrder));
+  }
   return `/api/play/${hash}/${idx}?${params.toString()}`;
 }
 
@@ -1828,19 +1833,37 @@ function populateSubtitlesList() {
 
 async function selectSubtitleItem(item) {
   if (item.kind === 'off') {
+    const hadBurn = state.burnSubOrder !== null && state.burnSubOrder !== undefined;
+    state.burnSubOrder = null;
     state.subtitles.activeId = 'off';
     state.subtitles.cues = [];
     detachVideoTrackElement();
     if (el.subtitleOverlay) el.subtitleOverlay.innerHTML = '';
     populateSubtitlesList();
+    if (hadBurn && state.infoHash) switchStreamParameterAndReload();
     return;
   }
+
+  const clearBurnIfActive = () => {
+    if (state.burnSubOrder !== null && state.burnSubOrder !== undefined) {
+      state.burnSubOrder = null;
+      if (state.infoHash) switchStreamParameterAndReload();
+    }
+  };
 
   if (item.kind === 'prepared' && item.prepared) {
     const sub = item.prepared;
     const codecLower = String(sub.codec || '').toLowerCase();
     if (['hdmv_pgs_subtitle', 'dvd_subtitle', 'dvb_subtitle'].includes(codecLower)) {
-      showToast('Görsel (PGS/VOB) gömülü altyazı metne çevrilemez. "Altyazı Bul" ile metin altyazı ekleyin.');
+      const subOrder = Number(sub.subOrder ?? 0);
+      state.subtitles.activeId = sub.id;
+      state.subtitles.cues = [];
+      detachVideoTrackElement();
+      if (el.subtitleOverlay) el.subtitleOverlay.innerHTML = '';
+      state.burnSubOrder = subOrder;
+      populateSubtitlesList();
+      showToast('Görsel (PGS/VOB) altyazı videoya işleniyor (Transcode)...');
+      switchStreamParameterAndReload();
       return;
     }
     if (Array.isArray(sub.cues) && sub.cues.length > 0) {
@@ -1849,6 +1872,7 @@ async function selectSubtitleItem(item) {
       if (sub.blobUrl) attachVideoTrackElement(sub.blobUrl, item.label);
       populateSubtitlesList();
       renderActiveSubtitleCue(getCurrentPlaybackTime());
+      clearBurnIfActive();
       return;
     }
     if (sub.vttUrl) {
@@ -1867,6 +1891,7 @@ async function selectSubtitleItem(item) {
         sub.blobUrl = blobUrl;
         sub.isReady = true;
         applyWebVttText(sub.id, item.label, vttText, blobUrl);
+        clearBurnIfActive();
         return;
       } catch (_) {
         showToast('Altyazı henüz hazır değil.');
