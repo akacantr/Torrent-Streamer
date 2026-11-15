@@ -334,6 +334,10 @@ function attachTorrentListeners(torrent: TorrentInstance): void {
   if (!torrent || torrent._torrentStreamerListenersAttached) return;
   torrent._torrentStreamerListenersAttached = true;
 
+  torrent.once("metadata", () => {
+    deselectAllFiles(torrent);
+  });
+
   torrent.on("error", (err: unknown) => {
     console.error(
       `[Torrent ${torrent.infoHash || "pending"}] error:`,
@@ -1989,13 +1993,11 @@ async function handleTorrentAdd(req: Request): Promise<Response> {
   const applyInitialSelection = (torrent: TorrentInstance) => {
     const tracker = getTracker(torrent.infoHash);
     deselectAllFiles(torrent);
-    selectSmallSubtitles(torrent);
 
     const files = torrent.files || [];
-    const videoFileCount = files.filter((f: TorrentFile) => isVideoFile(f.name)).length;
     const mainVideoIndex = computeMainVideoIndex(files);
 
-    if (files.length > 0 && (videoFileCount === 1 || autoSelectMain)) {
+    if (files.length > 0 && autoSelectMain) {
       selectOnlyFile(torrent, mainVideoIndex);
     } else {
       tracker.selectedFileIndex = null;

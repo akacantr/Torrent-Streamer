@@ -1,4 +1,4 @@
-import { SurroundAudioEngine } from './audio-engine.js?v=20261115b';
+import { SurroundAudioEngine } from './audio-engine.js?v=20261115c';
 
 const CHANNELS = ['L', 'C', 'R', 'LS', 'RS', 'LFE'];
 
@@ -435,19 +435,29 @@ function updateTimeAndSeekUi(overrideTime = null) {
   if (el.seekContainer) el.seekContainer.setAttribute('aria-valuenow', String(Math.round(pct)));
 
   let bufPct = 0;
+  let totalBufferedSec = 0;
+  let maxBufEndPct = 0;
   if (duration > 0 && el.video.buffered.length > 0) {
     try {
-      const bufEnd = el.video.buffered.end(el.video.buffered.length - 1);
+      for (let i = 0; i < el.video.buffered.length; i++) {
+        totalBufferedSec += Math.max(0, el.video.buffered.end(i) - el.video.buffered.start(i));
+      }
+      const lastEnd = el.video.buffered.end(el.video.buffered.length - 1);
       const effectiveBufEnd =
-        state.streamMode === 'remux' ? state.streamStartOffset + bufEnd : bufEnd;
-      bufPct = Math.max(0, Math.min(100, (effectiveBufEnd / duration) * 100));
+        state.streamMode === 'remux' ? state.streamStartOffset + lastEnd : lastEnd;
+      maxBufEndPct = Math.max(0, Math.min(100, (effectiveBufEnd / duration) * 100));
+      bufPct = Math.max(0, Math.min(100, (totalBufferedSec / duration) * 100));
     } catch (_) {
       // Ignore transient buffered errors
     }
   }
-  state.clientBufferRatio = bufPct / 100;
-  if (el.bufferedBar) el.bufferedBar.style.width = `${bufPct}%`;
-  if (el.telClientBuffer) el.telClientBuffer.textContent = `${bufPct.toFixed(1)}%`;
+  const effectiveUserPct =
+    typeof state.localDownloadRatio === 'number' && state.localDownloadRatio > 0
+      ? state.localDownloadRatio * 100
+      : bufPct;
+  state.clientBufferRatio = effectiveUserPct / 100;
+  if (el.bufferedBar) el.bufferedBar.style.width = `${maxBufEndPct}%`;
+  if (el.telClientBuffer) el.telClientBuffer.textContent = `${effectiveUserPct.toFixed(1)}%`;
   updateSourceReadinessBadges();
   updateSaveVideoButton();
 
@@ -658,6 +668,8 @@ function resetPlayerForNewSource() {
   state.activeFileIndex = null;
   state.selectedFileProgress = 0;
   state.selectedFileDone = false;
+  state.clientBufferRatio = 0;
+  state.localDownloadRatio = 0;
   state.streamStartOffset = 0;
   state.totalDuration = 0;
   state.audioTrack = 0;
@@ -707,9 +719,9 @@ async function onTorrentLoaded(data, seq) {
     return;
   }
 
-  // Selective File Picker: when multiple video files exist and backend hasn't selected one
+  // Selective File Picker: let user choose which video file to download & play
   if (
-    videoCount > 1 &&
+    videoCount >= 1 &&
     (data.selectedFileIndex === null || data.selectedFileIndex === undefined)
   ) {
     setLoading(false);
@@ -907,7 +919,7 @@ function updateSaveVideoButton() {
   }
 }
 
-function triggerSelectedVideoDownload() {
+async function triggerSelectedVideoDownload() {
   if (!state.infoHash || state.activeFileIndex === null) return;
   if (!state.selectedFileDone && state.selectedFileProgress < 0.999) {
     showToast('Dosya indirmesi henüz tamamlanmadı.');
@@ -915,12 +927,69 @@ function triggerSelectedVideoDownload() {
   }
   const url = `/api/download/${encodeURIComponent(state.infoHash)}/${state.activeFileIndex}`;
   const fileObj = state.files.find((f) => f.index === state.activeFileIndex);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = fileObj?.name || 'video';
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
+  const fileName = fileObj?.name || 'video';
+  const fileLen = Number(fileObj?.length) || 0;
+
+  // For huge files (> 1.5 GB), trigger native browser download to avoid RAM limits
+  if (fileLen > 1.5 * 1024 * 1024 * 1024) {
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    return;
+  }
+
+  try {
+    state.localDownloadRatio = 0.01;
+    updateSaveVideoButton();
+    const res = await fetch(url);
+    if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+
+    const total = Number(res.headers.get('content-length')) || fileLen;
+    const reader = res.body.getReader();
+    const chunks = [];
+    let received = 0;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      received += value.byteLength;
+      if (total > 0) {
+        state.localDownloadRatio = Math.min(1, received / total);
+        state.clientBufferRatio = state.localDownloadRatio;
+        if (el.telClientBuffer) el.telClientBuffer.textContent = `${(state.localDownloadRatio * 100).toFixed(1)}%`;
+        updateSourceReadinessBadges();
+        updateSaveVideoButton();
+      }
+    }
+
+    state.localDownloadRatio = 1;
+    state.clientBufferRatio = 1;
+    if (el.telClientBuffer) el.telClientBuffer.textContent = '100.0%';
+    updateSourceReadinessBadges();
+    updateSaveVideoButton();
+
+    const blob = new Blob(chunks);
+    const blobUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+  } catch (_) {
+    state.localDownloadRatio = 0;
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
 }
 
 // ============================================================================
@@ -934,6 +1003,8 @@ async function selectAndPlayFile(fileIndex, expectedSeq = state.loadSeq) {
   state.activeFileIndex = fileIndex;
   state.selectedFileProgress = 0;
   state.selectedFileDone = false;
+  state.clientBufferRatio = 0;
+  state.localDownloadRatio = 0;
   state.streamStartOffset = 0;
   state.audioTrack = 0;
   state.videoMode = 'copy';
