@@ -151,10 +151,12 @@ const el = {
   sliderLfeDb: /** @type {HTMLInputElement | null} */ (document.getElementById('slider-lfe-db')),
   sliderSurroundDb: /** @type {HTMLInputElement | null} */ (document.getElementById('slider-surround-db')),
   sliderMasterGain: /** @type {HTMLInputElement | null} */ (document.getElementById('slider-master-gain')),
+  sliderAudioDelay: /** @type {HTMLInputElement | null} */ (document.getElementById('slider-audio-delay')),
   valCenterDb: document.getElementById('val-center-db'),
   valLfeDb: document.getElementById('val-lfe-db'),
   valSurroundDb: document.getElementById('val-surround-db'),
   valMasterGain: document.getElementById('val-master-gain'),
+  valAudioDelay: document.getElementById('val-audio-delay'),
   toggleNightMode: /** @type {HTMLInputElement | null} */ (document.getElementById('toggle-night-mode')),
   btnResetGains: document.getElementById('btn-reset-gains'),
 
@@ -509,6 +511,9 @@ function applyEngineSettings() {
     masterGain: Number(el.sliderMasterGain?.value ?? 1),
   });
   audioEngine.setNightMode(Boolean(el.toggleNightMode?.checked));
+  if (typeof audioEngine.setAudioDelayMs === 'function') {
+    audioEngine.setAudioDelayMs(Number(el.sliderAudioDelay?.value ?? 0));
+  }
 
   if (el.speakerStage) {
     el.speakerStage.setAttribute('data-preset', state.audioPreset);
@@ -2927,6 +2932,7 @@ function bindEvents() {
   bindGainSlider(el.sliderLfeDb, el.valLfeDb, formatDb);
   bindGainSlider(el.sliderSurroundDb, el.valSurroundDb, formatDb);
   bindGainSlider(el.sliderMasterGain, el.valMasterGain, (v) => `${Math.round(v * 100)}%`);
+  bindGainSlider(el.sliderAudioDelay, el.valAudioDelay, (v) => `${Math.round(v)} ms`);
 
   el.toggleNightMode?.addEventListener('change', () => {
     void resumeAudioSafely();
@@ -3134,6 +3140,7 @@ function saveUserSettings() {
         lfeDb: Number(el.sliderLfeDb?.value ?? 0),
         surroundDb: Number(el.sliderSurroundDb?.value ?? 0),
         masterGain: Number(el.sliderMasterGain?.value ?? 1),
+        audioDelayMs: Number(el.sliderAudioDelay?.value ?? 0),
         nightMode: Boolean(el.toggleNightMode?.checked),
       }),
     );
@@ -3166,6 +3173,10 @@ function applySavedUserSettings() {
     if (typeof s.lfeDb === 'number' && el.sliderLfeDb) el.sliderLfeDb.value = String(s.lfeDb);
     if (typeof s.surroundDb === 'number' && el.sliderSurroundDb) el.sliderSurroundDb.value = String(s.surroundDb);
     if (typeof s.masterGain === 'number' && el.sliderMasterGain) el.sliderMasterGain.value = String(s.masterGain);
+    if (typeof s.audioDelayMs === 'number' && el.sliderAudioDelay) {
+      el.sliderAudioDelay.value = String(s.audioDelayMs);
+      if (el.valAudioDelay) el.valAudioDelay.textContent = `${Math.round(s.audioDelayMs)} ms`;
+    }
     if (typeof s.nightMode === 'boolean' && el.toggleNightMode) el.toggleNightMode.checked = s.nightMode;
     updateVolumeUi();
   } catch (_) {

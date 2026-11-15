@@ -648,7 +648,10 @@ export class SurroundAudioEngine {
       drcWetGain.connect(masterGainNode);
     }
 
-    masterGainNode.connect(ctx.destination);
+    const syncDelayNode = ctx.createDelay(5.0);
+    syncDelayNode.delayTime.value = Math.max(0, Math.min(3, (this.audioDelayMs || 0) / 1000));
+    masterGainNode.connect(syncDelayNode);
+    syncDelayNode.connect(ctx.destination);
 
     this._nodes = {
       splitter,
@@ -668,7 +671,21 @@ export class SurroundAudioEngine {
       drcDryGain,
       drcWetGain,
       masterGainNode,
+      syncDelayNode,
     };
+  }
+
+  /**
+   * Set real-time audio delay in milliseconds (0..3000 ms) to fix audio-ahead-of-video sync.
+   * @param {number} ms
+   */
+  setAudioDelayMs(ms) {
+    const clamped = Math.max(0, Math.min(3000, Number(ms) || 0));
+    this.audioDelayMs = clamped;
+    const node = this._nodes?.syncDelayNode;
+    if (node && this.ctx) {
+      this._setParam(node.delayTime, clamped / 1000);
+    }
   }
 
   /**

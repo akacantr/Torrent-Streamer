@@ -1295,14 +1295,14 @@ async function handlePlayRequest(
   const startSec = Number.isFinite(rawStart) && rawStart > 0 ? rawStart : 0;
 
   let sourceAudioChannels = 0;
-  if (audioMode === "stereo") {
-    try {
-      const probe = await runProbe(torrent.infoHash, fileIndex, requestSignal);
-      const track = probe.audio.find((a) => a.audioOrder === audioTrack) || probe.audio[audioTrack];
-      sourceAudioChannels = track?.channels || 2;
-    } catch {
-      sourceAudioChannels = 2;
-    }
+  let sourceAudioCodec = "";
+  try {
+    const probe = await runProbe(torrent.infoHash, fileIndex, requestSignal);
+    const track = probe.audio.find((a) => a.audioOrder === audioTrack) || probe.audio[audioTrack];
+    sourceAudioChannels = track?.channels || 2;
+    sourceAudioCodec = (track?.codec || "").toLowerCase();
+  } catch {
+    sourceAudioChannels = 2;
   }
 
   if (requestSignal.aborted) {
@@ -1315,10 +1315,15 @@ async function handlePlayRequest(
     "-hide_banner",
     "-loglevel",
     "error",
-    "-fflags",
-    "+genpts",
-    "-ss",
-    String(startSec),
+  ];
+  if (startSec > 0) {
+    if (videoMode === "copy") {
+      // Prevent ffmpeg from trimming audio ahead of the copied video keyframe.
+      args.push("-noaccurate_seek");
+    }
+    args.push("-ss", String(startSec));
+  }
+  args.push(
     "-i",
     streamUrl,
     "-map",
@@ -1327,7 +1332,7 @@ async function handlePlayRequest(
     `0:a:${audioTrack}?`,
     "-avoid_negative_ts",
     "make_zero",
-  ];
+  );
 
   if (videoMode === "transcode") {
     args.push("-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency", "-crf", "22", "-pix_fmt", "yuv420p");
@@ -1344,15 +1349,23 @@ async function handlePlayRequest(
     if (sourceAudioChannels >= 6) {
       args.push(
         "-af",
-        "pan=stereo|FL=0.5*FC+0.707*FL+0.707*BL+0.5*LFE|FR=0.5*FC+0.707*FR+0.707*BR+0.5*LFE,aresample=async=1:first_pts=0",
+        "pan=stereo|FL=0.5*FC+0.707*FL+0.707*BL+0.5*LFE|FR=0.5*FC+0.707*FR+0.707*BR+0.5*LFE,aresample=async=1",
       );
+    } else if (sourceAudioCodec === "aac" && sourceAudioChannels <= 2) {
+      args.push("-c:a", "copy");
     } else {
-      args.push("-af", "aresample=async=1:first_pts=0");
+      args.push("-af", "aresample=async=1");
     }
-    args.push("-c:a", "aac", "-ac", "2", "-b:a", "256k");
+    if (!args.includes("-c:a")) {
+      args.push("-c:a", "aac", "-ac", "2", "-b:a", "256k");
+    }
   } else {
-    args.push("-af", "aresample=async=1:first_pts=0");
-    args.push("-c:a", "aac", "-ac", "6", "-b:a", "640k");
+    if (sourceAudioCodec === "aac" && sourceAudioChannels === 6) {
+      args.push("-c:a", "copy");
+    } else {
+      args.push("-af", "aresample=async=1");
+      args.push("-c:a", "aac", "-ac", "6", "-b:a", "640k");
+    }
   }
 
   args.push("-muxdelay", "0", "-muxpreload", "0", "-f", "mp4", "-movflags", movflags, "pipe:1");
