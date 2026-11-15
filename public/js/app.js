@@ -104,6 +104,7 @@ const el = {
   subtitleMenu: document.getElementById('subtitle-menu'),
   subtitleMenuList: document.getElementById('subtitle-menu-list'),
   btnMenuUploadSub: document.getElementById('btn-menu-upload-sub'),
+  btnMenuSearchSub: document.getElementById('btn-menu-search-sub'),
   btnStats: document.getElementById('btn-stats'),
   btnToggleStudio: document.getElementById('btn-toggle-studio'),
   btnToggleFiles: document.getElementById('btn-toggle-files'),
@@ -161,6 +162,14 @@ const el = {
   activeSubtitleStatus: document.getElementById('active-subtitle-status'),
   subtitleFileInput: /** @type {HTMLInputElement | null} */ (document.getElementById('subtitle-file-input')),
   btnUploadSubtitle: document.getElementById('btn-upload-subtitle'),
+  btnSearchSubtitle: document.getElementById('btn-search-subtitle'),
+  subtitleSearchModal: document.getElementById('subtitle-search-modal'),
+  btnCloseSubSearch: document.getElementById('btn-close-sub-search'),
+  subSearchInput: document.getElementById('sub-search-input'),
+  btnSubSearchGo: document.getElementById('btn-sub-search-go'),
+  subSearchMeta: document.getElementById('sub-search-meta'),
+  subSearchLangs: document.getElementById('sub-search-langs'),
+  subSearchResults: document.getElementById('sub-search-results'),
   torrentFilesList: document.getElementById('torrent-files-list'),
   drawerFilesSummary: document.getElementById('drawer-files-summary'),
 
@@ -1822,6 +1831,11 @@ async function selectSubtitleItem(item) {
 
   if (item.kind === 'prepared' && item.prepared) {
     const sub = item.prepared;
+    const codecLower = String(sub.codec || '').toLowerCase();
+    if (['hdmv_pgs_subtitle', 'dvd_subtitle', 'dvb_subtitle'].includes(codecLower)) {
+      showToast('Görsel (PGS/VOB) gömülü altyazı metne çevrilemez. "Altyazı Bul" ile metin altyazı ekleyin.');
+      return;
+    }
     if (Array.isArray(sub.cues) && sub.cues.length > 0) {
       state.subtitles.activeId = sub.id;
       state.subtitles.cues = sub.cues;
@@ -1832,7 +1846,8 @@ async function selectSubtitleItem(item) {
     }
     if (sub.vttUrl) {
       try {
-        const res = await fetch(sub.vttUrl);
+        const startParam = sub.kind === 'embedded' ? `?start=${Math.floor(getCurrentPlaybackTime())}` : '';
+        const res = await fetch(`${sub.vttUrl}${startParam}`);
         if (res.status === 503) {
           showToast('Video indirildikçe altyazı hazırlanıyor, birazdan tekrar deneyin.');
           return;
@@ -1854,7 +1869,8 @@ async function selectSubtitleItem(item) {
   }
 
   if (item.kind === 'embedded' && state.infoHash && state.activeFileIndex !== null) {
-    const url = `/api/subtitles/${encodeURIComponent(state.infoHash)}/${state.activeFileIndex}/${item.subOrder}.vtt`;
+    const startSec = Math.floor(getCurrentPlaybackTime());
+    const url = `/api/subtitles/${encodeURIComponent(state.infoHash)}/${state.activeFileIndex}/${item.subOrder}.vtt?start=${startSec}`;
     try {
       const res = await fetch(url);
       if (res.status === 503) {
@@ -1930,6 +1946,182 @@ function handleLocalSubtitleUpload(file) {
     showToast(`Harici altyazı yüklendi: ${file.name} (${cues.length} satır)`);
   };
   reader.readAsText(file, 'UTF-8');
+}
+
+const subSearchState = {
+  data: null,
+  selectedLang: 'all',
+};
+
+function openSubtitleSearchModal() {
+  if (!el.subtitleSearchModal) return;
+  const activeFile = state.files.find((f) => f.index === state.activeFileIndex);
+  const defaultQuery = activeFile?.name || state.torrentName || '';
+  if (el.subSearchInput && (!el.subSearchInput.value.trim() || defaultQuery)) {
+    el.subSearchInput.value = defaultQuery;
+  }
+  el.subtitleSearchModal.classList.remove('hidden');
+  if (el.subSearchInput?.value.trim()) {
+    void runSubtitleSearch(el.subSearchInput.value.trim());
+  }
+}
+
+async function runSubtitleSearch(rawQuery) {
+  const query = String(rawQuery || '').trim();
+  if (!query) {
+    showToast('Aramak için film veya dizi adı yazın.');
+    return;
+  }
+  if (el.subSearchMeta) el.subSearchMeta.textContent = 'Aranıyor...';
+  if (el.subSearchLangs) el.subSearchLangs.innerHTML = '';
+  if (el.subSearchResults) {
+    el.subSearchResults.innerHTML = '<div class="empty-list-msg">Altyazılar aranıyor...</div>';
+  }
+
+  try {
+    const res = await fetch(`/api/subtitles/search?q=${encodeURIComponent(query)}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    subSearchState.data = data;
+
+    // Default to Turkish if available, otherwise All
+    const hasTur = Array.isArray(data.languages) && data.languages.some((l) => l.code === 'tur' || l.code === 'tr');
+    subSearchState.selectedLang = hasTur ? (data.languages.find((l) => l.code === 'tur' || l.code === 'tr')?.code || 'all') : 'all';
+
+    renderSubtitleSearchModal();
+  } catch (err) {
+    if (el.subSearchMeta) el.subSearchMeta.textContent = 'Arama sırasında hata oluştu.';
+    if (el.subSearchResults) {
+      el.subSearchResults.innerHTML = `<div class="empty-list-msg">Altyazı aranamadı (${err?.message || 'Hata'}).</div>`;
+    }
+  }
+}
+
+function renderSubtitleSearchModal() {
+  const data = subSearchState.data;
+  if (!data) return;
+
+  if (el.subSearchMeta) {
+    if (data.matchedTitle) {
+      const yearPart = data.year ? ` (${data.year})` : '';
+      el.subSearchMeta.textContent = `Eşleşen: ${data.matchedTitle}${yearPart} • ${data.subtitles?.length || 0} altyazı`;
+    } else {
+      el.subSearchMeta.textContent = `"${data.cleanTitle}" için eşleşme bulunamadı.`;
+    }
+  }
+
+  if (el.subSearchLangs) {
+    el.subSearchLangs.innerHTML = '';
+    const langs = Array.isArray(data.languages) ? data.languages : [];
+    const total = Array.isArray(data.subtitles) ? data.subtitles.length : 0;
+
+    if (total > 0) {
+      const allBtn = document.createElement('button');
+      allBtn.type = 'button';
+      allBtn.className = `sub-lang-pill ${subSearchState.selectedLang === 'all' ? 'active' : ''}`;
+      allBtn.textContent = `🌍 Tümü (${total})`;
+      allBtn.addEventListener('click', () => {
+        subSearchState.selectedLang = 'all';
+        renderSubtitleSearchModal();
+      });
+      el.subSearchLangs.appendChild(allBtn);
+
+      for (const l of langs) {
+        const pill = document.createElement('button');
+        pill.type = 'button';
+        pill.className = `sub-lang-pill ${subSearchState.selectedLang === l.code ? 'active' : ''}`;
+        pill.textContent = `${l.flag} ${l.name} (${l.count})`;
+        pill.addEventListener('click', () => {
+          subSearchState.selectedLang = l.code;
+          renderSubtitleSearchModal();
+        });
+        el.subSearchLangs.appendChild(pill);
+      }
+    }
+  }
+
+  if (el.subSearchResults) {
+    el.subSearchResults.innerHTML = '';
+    const allSubs = Array.isArray(data.subtitles) ? data.subtitles : [];
+    const filtered = subSearchState.selectedLang === 'all'
+      ? allSubs
+      : allSubs.filter((s) => s.lang === subSearchState.selectedLang);
+
+    if (filtered.length === 0) {
+      el.subSearchResults.innerHTML = '<div class="empty-list-msg">Bu dilde altyazı bulunamadı.</div>';
+      return;
+    }
+
+    for (const sub of filtered.slice(0, 60)) {
+      const row = document.createElement('div');
+      row.className = 'sub-search-item';
+
+      const info = document.createElement('div');
+      info.className = 'sub-search-item-info';
+
+      const title = document.createElement('div');
+      title.className = 'sub-search-item-title';
+      title.textContent = `${sub.flag} ${sub.fileName}`;
+      title.title = sub.fileName;
+
+      const meta = document.createElement('div');
+      meta.className = 'sub-search-item-meta';
+      meta.textContent = `${sub.langName}${sub.releaseName ? ` • ${sub.releaseName}` : ''}`;
+
+      info.appendChild(title);
+      info.appendChild(meta);
+
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'btn btn-primary btn-xs';
+      btn.textContent = 'Ekle ve Kullan';
+      btn.addEventListener('click', () => void attachSearchedSubtitle(sub, btn));
+
+      row.appendChild(info);
+      row.appendChild(btn);
+      el.subSearchResults.appendChild(row);
+    }
+  }
+}
+
+async function attachSearchedSubtitle(sub, btnEl) {
+  if (!sub?.url) return;
+  const origText = btnEl?.textContent || 'Ekle ve Kullan';
+  if (btnEl) {
+    btnEl.disabled = true;
+    btnEl.textContent = 'Ekleniyor...';
+  }
+  try {
+    const res = await fetch(`/api/subtitles/fetch-external?url=${encodeURIComponent(sub.url)}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const vttText = await res.text();
+    const cues = parseWebVtt(vttText);
+    if (cues.length === 0) throw new Error('Altyazı satırı bulunamadı');
+
+    const blob = new Blob([vttText], { type: 'text/vtt;charset=utf-8' });
+    const blobUrl = URL.createObjectURL(blob);
+    const id = `ext:${sub.id || Date.now()}`;
+    const label = `${sub.flag} ${sub.langName} — ${sub.fileName}`;
+
+    const existingIdx = state.subtitles.localTracks.findIndex((t) => t.id === id);
+    const trackObj = { id, label, blobUrl, cues };
+    if (existingIdx >= 0) state.subtitles.localTracks[existingIdx] = trackObj;
+    else state.subtitles.localTracks.push(trackObj);
+
+    state.subtitles.activeId = id;
+    state.subtitles.cues = cues;
+    attachVideoTrackElement(blobUrl, label);
+    populateSubtitlesList();
+    renderActiveSubtitleCue(getCurrentPlaybackTime());
+    el.subtitleSearchModal?.classList.add('hidden');
+    showToast(`Altyazı eklendi: ${sub.flag} ${sub.langName} (${cues.length} satır)`);
+  } catch (err) {
+    showToast(`Altyazı eklenemedi: ${err?.message || 'Hata'}`);
+    if (btnEl) {
+      btnEl.disabled = false;
+      btnEl.textContent = origText;
+    }
+  }
 }
 
 function applyWebVttText(id, label, vttText, trackSrc) {
@@ -2792,7 +2984,7 @@ function bindEvents() {
       !el.subtitleMenu.classList.contains('hidden') &&
       target &&
       !el.subtitleMenu.contains(target) &&
-      target !== el.btnSubtitles
+      !el.btnSubtitles?.contains(target)
     ) {
       el.subtitleMenu.classList.add('hidden');
     }
@@ -2801,7 +2993,7 @@ function bindEvents() {
       !el.audioTrackMenu.classList.contains('hidden') &&
       target &&
       !el.audioTrackMenu.contains(target) &&
-      target !== el.btnAudioTracks
+      !el.btnAudioTracks?.contains(target)
     ) {
       el.audioTrackMenu.classList.add('hidden');
     }
@@ -2810,6 +3002,24 @@ function bindEvents() {
   const openSubUpload = () => el.subtitleFileInput?.click();
   el.btnUploadSubtitle?.addEventListener('click', openSubUpload);
   el.btnMenuUploadSub?.addEventListener('click', openSubUpload);
+  el.btnSearchSubtitle?.addEventListener('click', () => openSubtitleSearchModal());
+  el.btnMenuSearchSub?.addEventListener('click', () => {
+    el.subtitleMenu?.classList.add('hidden');
+    openSubtitleSearchModal();
+  });
+  el.btnCloseSubSearch?.addEventListener('click', () => el.subtitleSearchModal?.classList.add('hidden'));
+  el.subtitleSearchModal?.addEventListener('click', (e) => {
+    if (e.target === el.subtitleSearchModal) el.subtitleSearchModal?.classList.add('hidden');
+  });
+  el.btnSubSearchGo?.addEventListener('click', () => {
+    void runSubtitleSearch(el.subSearchInput?.value || '');
+  });
+  el.subSearchInput?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      void runSubtitleSearch(el.subSearchInput?.value || '');
+    }
+  });
   el.subtitleFileInput?.addEventListener('change', () => {
     const file = el.subtitleFileInput?.files?.[0];
     if (file) handleLocalSubtitleUpload(file);

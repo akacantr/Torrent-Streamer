@@ -212,6 +212,7 @@ interface TorrentPieceTracker {
 
 const pieceTrackers = new Map<string, TorrentPieceTracker>();
 const probeCache = new Map<string, ProbeResponse>();
+const probeInFlight = new Map<string, Promise<ProbeResponse>>();
 const vttCache = new Map<string, string>();
 let demoSeedPromise: Promise<TorrentInstance> | null = null;
 let actualListeningPort = PORT;
@@ -870,164 +871,176 @@ async function runProbe(infoHash: string, fileIndex: number, signal?: AbortSigna
   const cached = probeCache.get(cacheKey);
   if (cached) return cached;
 
-  const torrent = findTorrentByHash(infoHash);
-  const localPath = await getReadyLocalFilePath(torrent, fileIndex);
-  const inputSource = localPath ?? `http://127.0.0.1:${actualListeningPort}/api/stream/${infoHash}/${fileIndex}`;
-  const timeoutSignal = AbortSignal.timeout(45_000);
-  const combinedSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
+  const existing = probeInFlight.get(cacheKey);
+  if (existing) return await existing;
 
-  const cmd = new Deno.Command("ffprobe", {
-    args: [
-      "-v",
-      "quiet",
-      "-print_format",
-      "json",
-      "-show_format",
-      "-show_streams",
-      "-show_chapters",
-      "-probesize",
-      "20M",
-      "-analyzeduration",
-      "10M",
-      inputSource,
-    ],
-    stdout: "piped",
-    stderr: "piped",
-    signal: combinedSignal,
-  });
+  const promise = (async () => {
+    const torrent = findTorrentByHash(infoHash);
+    const localPath = await getReadyLocalFilePath(torrent, fileIndex);
+    const inputSource = localPath ?? `http://127.0.0.1:${actualListeningPort}/api/stream/${infoHash}/${fileIndex}`;
+    const timeoutSignal = AbortSignal.timeout(45_000);
+    const combinedSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
 
-  const output = await cmd.output();
-  if (!output.success) {
-    const errText = new TextDecoder().decode(output.stderr).trim();
-    throw new Error(errText || `ffprobe failed with exit code ${output.code}`);
-  }
+    const cmd = new Deno.Command("ffprobe", {
+      args: [
+        "-v",
+        "quiet",
+        "-print_format",
+        "json",
+        "-show_format",
+        "-show_streams",
+        "-show_chapters",
+        "-probesize",
+        "20M",
+        "-analyzeduration",
+        "10M",
+        inputSource,
+      ],
+      stdout: "piped",
+      stderr: "piped",
+      signal: combinedSignal,
+    });
 
-  const rawJson = new TextDecoder().decode(output.stdout);
-  // deno-lint-ignore no-explicit-any
-  const parsed: any = JSON.parse(rawJson || "{}");
-  // deno-lint-ignore no-explicit-any
-  const streams: any[] = Array.isArray(parsed.streams) ? parsed.streams : [];
-  // deno-lint-ignore no-explicit-any
-  const rawChapters: any[] = Array.isArray(parsed.chapters) ? parsed.chapters : [];
-
-  const video: ProbeVideoStream[] = [];
-  const audio: ProbeAudioStream[] = [];
-  const subtitles: ProbeSubtitleStream[] = [];
-
-  let audioOrder = 0;
-  let subOrder = 0;
-
-  for (const s of streams) {
-    const type = String(s.codec_type || "");
-    if (type === "video") {
-      if (s.disposition?.attached_pic === 1) continue;
-      const pixFmt = String(s.pix_fmt || "");
-      const rawDepth = Number(s.bits_per_raw_sample || 0);
-      const bitDepth = rawDepth > 0
-        ? rawDepth
-        : pixFmt.includes("12")
-        ? 12
-        : pixFmt.includes("10")
-        ? 10
-        : 8;
-      const fps = parseFps(s.avg_frame_rate) || parseFps(s.r_frame_rate);
-      const hdrFormat = detectHdrFormat(s);
-      video.push({
-        index: Number(s.index ?? 0),
-        codec: String(s.codec_name || "unknown"),
-        codecLongName: String(s.codec_long_name || s.codec_name || "Unknown"),
-        profile: String(s.profile || ""),
-        width: Number(s.width || 0),
-        height: Number(s.height || 0),
-        fps,
-        bitDepth,
-        pixFmt,
-        colorSpace: String(s.color_space || ""),
-        colorTransfer: String(s.color_transfer || ""),
-        colorPrimaries: String(s.color_primaries || ""),
-        hdr: hdrFormat !== "SDR",
-        hdrFormat,
-        bitrate: Number(s.bit_rate || s.tags?.BPS || 0) || 0,
-      });
-    } else if (type === "audio") {
-      const codec = String(s.codec_name || "unknown");
-      const profile = String(s.profile || "");
-      const codecLongName = String(s.codec_long_name || codec);
-      const channels = Number(s.channels || 2);
-      const channelLayout = String(s.channel_layout || "");
-      const sampleRate = Number(s.sample_rate || 0);
-      const bitrate = Number(s.bit_rate || s.tags?.BPS || 0) || 0;
-      const language = String(s.tags?.language || "und");
-      const title = String(s.tags?.title || s.tags?.HANDLER_NAME || "");
-      const profileStr = `${profile} ${codecLongName} ${title}`;
-      const isAtmos = /atmos|joc/i.test(profileStr);
-      const isSurround51 = channels >= 6 || /5\.1|6\.1|7\.1/i.test(channelLayout);
-      const cLower = codec.toLowerCase();
-      const isLossless =
-        ["truehd", "mlp", "flac", "alac", "wavpack"].includes(cLower) ||
-        cLower.startsWith("pcm_") ||
-        /ma|master audio/i.test(profile);
-
-      audio.push({
-        index: Number(s.index ?? 0),
-        audioOrder: audioOrder++,
-        codec,
-        codecLongName,
-        profile,
-        channels,
-        channelLayout,
-        sampleRate,
-        bitrate,
-        language,
-        title,
-        isAtmos,
-        isSurround51,
-        isLossless,
-        label: buildAudioLabel(codec, channels, language, title, isAtmos),
-      });
-    } else if (type === "subtitle") {
-      subtitles.push({
-        index: Number(s.index ?? 0),
-        subOrder: subOrder++,
-        codec: String(s.codec_name || "unknown"),
-        language: String(s.tags?.language || "und"),
-        title: String(s.tags?.title || ""),
-      });
+    const output = await cmd.output();
+    if (!output.success) {
+      const errText = new TextDecoder().decode(output.stderr).trim();
+      throw new Error(errText || `ffprobe failed with exit code ${output.code}`);
     }
+
+    const rawJson = new TextDecoder().decode(output.stdout);
+    // deno-lint-ignore no-explicit-any
+    const parsed: any = JSON.parse(rawJson || "{}");
+    // deno-lint-ignore no-explicit-any
+    const streams: any[] = Array.isArray(parsed.streams) ? parsed.streams : [];
+    // deno-lint-ignore no-explicit-any
+    const rawChapters: any[] = Array.isArray(parsed.chapters) ? parsed.chapters : [];
+
+    const video: ProbeVideoStream[] = [];
+    const audio: ProbeAudioStream[] = [];
+    const subtitles: ProbeSubtitleStream[] = [];
+
+    let audioOrder = 0;
+    let subOrder = 0;
+
+    for (const s of streams) {
+      const type = String(s.codec_type || "");
+      if (type === "video") {
+        if (s.disposition?.attached_pic === 1) continue;
+        const pixFmt = String(s.pix_fmt || "");
+        const rawDepth = Number(s.bits_per_raw_sample || 0);
+        const bitDepth = rawDepth > 0
+          ? rawDepth
+          : pixFmt.includes("12")
+          ? 12
+          : pixFmt.includes("10")
+          ? 10
+          : 8;
+        const fps = parseFps(s.avg_frame_rate) || parseFps(s.r_frame_rate);
+        const hdrFormat = detectHdrFormat(s);
+        video.push({
+          index: Number(s.index ?? 0),
+          codec: String(s.codec_name || "unknown"),
+          codecLongName: String(s.codec_long_name || s.codec_name || "Unknown"),
+          profile: String(s.profile || ""),
+          width: Number(s.width || 0),
+          height: Number(s.height || 0),
+          fps,
+          bitDepth,
+          pixFmt,
+          colorSpace: String(s.color_space || ""),
+          colorTransfer: String(s.color_transfer || ""),
+          colorPrimaries: String(s.color_primaries || ""),
+          hdr: hdrFormat !== "SDR",
+          hdrFormat,
+          bitrate: Number(s.bit_rate || s.tags?.BPS || 0) || 0,
+        });
+      } else if (type === "audio") {
+        const codec = String(s.codec_name || "unknown");
+        const profile = String(s.profile || "");
+        const codecLongName = String(s.codec_long_name || codec);
+        const channels = Number(s.channels || 2);
+        const channelLayout = String(s.channel_layout || "");
+        const sampleRate = Number(s.sample_rate || 0);
+        const bitrate = Number(s.bit_rate || s.tags?.BPS || 0) || 0;
+        const language = String(s.tags?.language || "und");
+        const title = String(s.tags?.title || s.tags?.HANDLER_NAME || "");
+        const profileStr = `${profile} ${codecLongName} ${title}`;
+        const isAtmos = /atmos|joc/i.test(profileStr);
+        const isSurround51 = channels >= 6 || /5\.1|6\.1|7\.1/i.test(channelLayout);
+        const cLower = codec.toLowerCase();
+        const isLossless =
+          ["truehd", "mlp", "flac", "alac", "wavpack"].includes(cLower) ||
+          cLower.startsWith("pcm_") ||
+          /ma|master audio/i.test(profile);
+
+        audio.push({
+          index: Number(s.index ?? 0),
+          audioOrder: audioOrder++,
+          codec,
+          codecLongName,
+          profile,
+          channels,
+          channelLayout,
+          sampleRate,
+          bitrate,
+          language,
+          title,
+          isAtmos,
+          isSurround51,
+          isLossless,
+          label: buildAudioLabel(codec, channels, language, title, isAtmos),
+        });
+      } else if (type === "subtitle") {
+        subtitles.push({
+          index: Number(s.index ?? 0),
+          subOrder: subOrder++,
+          codec: String(s.codec_name || "unknown"),
+          language: String(s.tags?.language || "und"),
+          title: String(s.tags?.title || ""),
+        });
+      }
+    }
+
+    let duration = Number(parsed.format?.duration || 0);
+    if (!Number.isFinite(duration) || duration <= 0) {
+      const firstDur = Number(streams.find((s) => Number(s.duration) > 0)?.duration || 0);
+      duration = Number.isFinite(firstDur) ? firstDur : 0;
+    }
+
+    const chapters: ProbeChapter[] = rawChapters.map((c, idx) => ({
+      id: Number(c.id ?? idx),
+      startTime: Number(c.start_time || 0) || 0,
+      endTime: Number(c.end_time || 0) || 0,
+      title: String(c.tags?.title || `Bölüm ${idx + 1}`),
+    }));
+
+    const container = String(parsed.format?.format_name || "unknown");
+    const bitrate = Number(parsed.format?.bit_rate || 0) || 0;
+    const detectedTechnologies = buildDetectedTechnologies(video, audio, subtitles);
+
+    const result: ProbeResponse = {
+      duration,
+      container,
+      bitrate,
+      chapters,
+      video,
+      audio,
+      subtitles,
+      detectedTechnologies,
+    };
+
+    if (video.length > 0 || audio.length > 0) {
+      probeCache.set(cacheKey, result);
+    }
+    return result;
+  })();
+
+  probeInFlight.set(cacheKey, promise);
+  try {
+    return await promise;
+  } finally {
+    probeInFlight.delete(cacheKey);
   }
-
-  let duration = Number(parsed.format?.duration || 0);
-  if (!Number.isFinite(duration) || duration <= 0) {
-    const firstDur = Number(streams.find((s) => Number(s.duration) > 0)?.duration || 0);
-    duration = Number.isFinite(firstDur) ? firstDur : 0;
-  }
-
-  const chapters: ProbeChapter[] = rawChapters.map((c, idx) => ({
-    id: Number(c.id ?? idx),
-    startTime: Number(c.start_time || 0) || 0,
-    endTime: Number(c.end_time || 0) || 0,
-    title: String(c.tags?.title || `Bölüm ${idx + 1}`),
-  }));
-
-  const container = String(parsed.format?.format_name || "unknown");
-  const bitrate = Number(parsed.format?.bit_rate || 0) || 0;
-  const detectedTechnologies = buildDetectedTechnologies(video, audio, subtitles);
-
-  const result: ProbeResponse = {
-    duration,
-    container,
-    bitrate,
-    chapters,
-    video,
-    audio,
-    subtitles,
-    detectedTechnologies,
-  };
-
-  if (video.length > 0 || audio.length > 0) {
-    probeCache.set(cacheKey, result);
-  }
-  return result;
 }
 
 function parseByteRange(rangeHeader: string, fileLength: number): { start: number; end: number } | null {
@@ -1544,6 +1557,7 @@ async function extractEmbeddedSubVtt(
   fileIndex: number,
   subOrder: number,
   signal?: AbortSignal,
+  startSec = 0,
 ): Promise<string> {
   const cacheKey = `${infoHash.toLowerCase()}:${fileIndex}:${subOrder}`;
   const cached = vttCache.get(cacheKey);
@@ -1552,33 +1566,73 @@ async function extractEmbeddedSubVtt(
   const torrent = findTorrentByHash(infoHash);
   const localPath = await getReadyLocalFilePath(torrent, fileIndex);
   const inputSource = localPath ?? `http://127.0.0.1:${actualListeningPort}/api/stream/${infoHash}/${fileIndex}`;
-  const timeoutSignal = AbortSignal.timeout(localPath ? 45_000 : 25_000);
-  const combinedSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
 
-  const output = await new Deno.Command("ffmpeg", {
-    args: [
-      "-hide_banner",
-      "-loglevel",
-      "error",
-      "-i",
-      inputSource,
-      "-map",
-      `0:s:${subOrder}`,
-      "-f",
-      "webvtt",
-      "pipe:1",
-    ],
+  const args = ["-hide_banner", "-loglevel", "error"];
+  if (!localPath) {
+    const seekStart = Math.max(0, Math.floor(startSec) - 15);
+    args.push("-copyts", "-ss", String(seekStart), "-t", "600");
+  }
+  args.push("-i", inputSource, "-map", `0:s:${subOrder}`, "-f", "webvtt", "pipe:1");
+
+  const timeoutMs = localPath ? 45_000 : 10_000;
+  const child = new Deno.Command("ffmpeg", {
+    args,
     stdout: "piped",
     stderr: "null",
-    signal: combinedSignal,
-  }).output();
+  }).spawn();
 
-  if (!output.success || output.stdout.byteLength === 0) {
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  const reader = child.stdout.getReader();
+
+  const stopChild = () => {
+    try {
+      child.kill();
+    } catch {
+      // Already exited
+    }
+  };
+
+  const timer = setTimeout(stopChild, timeoutMs);
+  const onAbort = () => stopChild();
+  signal?.addEventListener("abort", onAbort, { once: true });
+
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (value && value.byteLength > 0) {
+        chunks.push(value);
+        totalBytes += value.byteLength;
+      }
+    }
+  } catch {
+    // Partial output may still contain valid WebVTT cues
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", onAbort);
+    reader.releaseLock();
+  }
+
+  const status = await child.status.catch(() => ({ success: false }));
+  if (totalBytes === 0) {
     throw new Error(`Subtitle track ${subOrder} not found or failed to extract`);
   }
 
-  const vttText = new TextDecoder().decode(output.stdout);
-  vttCache.set(cacheKey, vttText);
+  const out = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const c of chunks) {
+    out.set(c, offset);
+    offset += c.byteLength;
+  }
+  const vttText = new TextDecoder().decode(out);
+  if (!vttText.includes("-->")) {
+    throw new Error(`Subtitle track ${subOrder} yielded no cues yet`);
+  }
+
+  if (localPath && status.success) {
+    vttCache.set(cacheKey, vttText);
+  }
   return vttText;
 }
 
@@ -1773,6 +1827,7 @@ async function handlePrepareSubtitlesRequest(
 
 async function handleSubtitleRequest(
   requestSignal: AbortSignal,
+  url: URL,
   infoHash: string,
   fileIndexStr: string,
   subSegment: string,
@@ -1789,6 +1844,8 @@ async function handleSubtitleRequest(
   const subMatch = /^(\d+)\.vtt$/i.exec(subSegment);
   if (!subMatch) return errorResponse("Invalid subtitle track path", 400);
   const subOrder = Number(subMatch[1]);
+  const startRaw = Number(url.searchParams.get("start") ?? "0");
+  const startSec = Number.isFinite(startRaw) && startRaw > 0 ? startRaw : 0;
 
   prioritizeFileHeaderFooter(torrent, fileIndex);
 
@@ -1798,6 +1855,7 @@ async function handleSubtitleRequest(
       fileIndex,
       subOrder,
       requestSignal,
+      startSec,
     );
     return new Response(vttText, {
       status: 200,
@@ -1814,6 +1872,266 @@ async function handleSubtitleRequest(
         : "Video is still downloading; embedded subtitle extraction is pending",
       fileDone ? 404 : 503,
     );
+  }
+}
+
+const SUB_LANG_META: Record<string, { flag: string; name: string }> = {
+  tur: { flag: "🇹🇷", name: "Türkçe" },
+  tr: { flag: "🇹🇷", name: "Türkçe" },
+  eng: { flag: "🇬🇧", name: "İngilizce" },
+  en: { flag: "🇬🇧", name: "İngilizce" },
+  deu: { flag: "🇩🇪", name: "Almanca" },
+  ger: { flag: "🇩🇪", name: "Almanca" },
+  de: { flag: "🇩🇪", name: "Almanca" },
+  fra: { flag: "🇫🇷", name: "Fransızca" },
+  fre: { flag: "🇫🇷", name: "Fransızca" },
+  fr: { flag: "🇫🇷", name: "Fransızca" },
+  spa: { flag: "🇪🇸", name: "İspanyolca" },
+  es: { flag: "🇪🇸", name: "İspanyolca" },
+  ita: { flag: "🇮🇹", name: "İtalyanca" },
+  it: { flag: "🇮🇹", name: "İtalyanca" },
+  por: { flag: "🇵🇹", name: "Portekizce" },
+  pob: { flag: "🇧🇷", name: "Portekizce (BR)" },
+  rus: { flag: "🇷🇺", name: "Rusça" },
+  ru: { flag: "🇷🇺", name: "Rusça" },
+  ara: { flag: "🇸🇦", name: "Arapça" },
+  ar: { flag: "🇸🇦", name: "Arapça" },
+  jpn: { flag: "🇯🇵", name: "Japonca" },
+  ja: { flag: "🇯🇵", name: "Japonca" },
+  kor: { flag: "🇰🇷", name: "Korece" },
+  ko: { flag: "🇰🇷", name: "Korece" },
+  zho: { flag: "🇨🇳", name: "Çince" },
+  chi: { flag: "🇨🇳", name: "Çince" },
+  zh: { flag: "🇨🇳", name: "Çince" },
+  nld: { flag: "🇳🇱", name: "Felemenkçe" },
+  dut: { flag: "🇳🇱", name: "Felemenkçe" },
+  pol: { flag: "🇵🇱", name: "Lehçe" },
+  swe: { flag: "🇸🇪", name: "İsveççe" },
+  nor: { flag: "🇳🇴", name: "Norveççe" },
+  dan: { flag: "🇩🇰", name: "Danca" },
+  fin: { flag: "🇫🇮", name: "Fince" },
+  ell: { flag: "🇬🇷", name: "Yunanca" },
+  gre: { flag: "🇬🇷", name: "Yunanca" },
+  heb: { flag: "🇮🇱", name: "İbranice" },
+  hin: { flag: "🇮🇳", name: "Hintçe" },
+  ukr: { flag: "🇺🇦", name: "Ukraynaca" },
+  ces: { flag: "🇨🇿", name: "Çekçe" },
+  cze: { flag: "🇨🇿", name: "Çekçe" },
+  hun: { flag: "🇭🇺", name: "Macarca" },
+  ron: { flag: "🇷🇴", name: "Rumence" },
+  rum: { flag: "🇷🇴", name: "Rumence" },
+  bul: { flag: "🇧🇬", name: "Bulgarca" },
+  aze: { flag: "🇦🇿", name: "Azerice" },
+  fas: { flag: "🇮🇷", name: "Farsça" },
+  per: { flag: "🇮🇷", name: "Farsça" },
+  ind: { flag: "🇮🇩", name: "Endonezce" },
+  vie: { flag: "🇻🇳", name: "Vietnamca" },
+  tha: { flag: "🇹🇭", name: "Tayca" },
+};
+
+function getSubLangInfo(code: string): { code: string; flag: string; name: string } {
+  const norm = (code || "und").toLowerCase().trim();
+  const meta = SUB_LANG_META[norm];
+  if (meta) return { code: norm, flag: meta.flag, name: meta.name };
+  return { code: norm, flag: "🌐", name: norm.toUpperCase() };
+}
+
+function parseMediaQueryFromFilename(raw: string): {
+  cleanTitle: string;
+  year: number | null;
+  season: number | null;
+  episode: number | null;
+} {
+  let name = raw.replace(/\.[a-z0-9]{2,4}$/i, "");
+  let season: number | null = null;
+  let episode: number | null = null;
+  const seMatch = /\bS(\d{1,2})E(\d{1,2})\b/i.exec(name);
+  if (seMatch) {
+    season = Number(seMatch[1]);
+    episode = Number(seMatch[2]);
+    name = name.slice(0, seMatch.index);
+  }
+
+  let year: number | null = null;
+  const yearMatch = /\b(19\d{2}|20\d{2})\b/.exec(name);
+  if (yearMatch) {
+    year = Number(yearMatch[1]);
+    name = name.slice(0, yearMatch.index);
+  }
+
+  const releaseSplit = /\b(2160p|1080p|720p|480p|4k|uhd|hdr|dv|dolby|bluray|bdrip|brrip|web-dl|webdl|webrip|hdtv|remux|x264|x265|h264|h265|hevc|av1|aac|ac3|eac3|dts|truehd|atmos|10bit)\b/i.exec(name);
+  if (releaseSplit) {
+    name = name.slice(0, releaseSplit.index);
+  }
+
+  const cleanTitle = name
+    .replace(/[._[\]()-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return { cleanTitle: cleanTitle || raw.trim(), year, season, episode };
+}
+
+async function handleSubtitleSearch(requestSignal: AbortSignal, url: URL): Promise<Response> {
+  const rawQuery = (url.searchParams.get("q") || "").trim();
+  if (!rawQuery) return errorResponse("Arama sorgusu boş olamaz", 400);
+
+  const parsed = parseMediaQueryFromFilename(rawQuery);
+  const preferSeries = parsed.season !== null && parsed.episode !== null;
+  const searchTypes: Array<"movie" | "series"> = preferSeries ? ["series", "movie"] : ["movie", "series"];
+
+  const timeoutSignal = AbortSignal.any([requestSignal, AbortSignal.timeout(12_000)]);
+
+  // deno-lint-ignore no-explicit-any
+  let matchedMeta: any = null;
+  let matchedType: "movie" | "series" = searchTypes[0];
+
+  for (const mediaType of searchTypes) {
+    const queryStr = parsed.year ? `${parsed.cleanTitle} ${parsed.year}` : parsed.cleanTitle;
+    const cinemetaUrl = `https://v3-cinemeta.strem.io/catalog/${mediaType}/top/search=${encodeURIComponent(queryStr)}.json`;
+    try {
+      const res = await fetch(cinemetaUrl, { signal: timeoutSignal });
+      if (!res.ok) continue;
+      // deno-lint-ignore no-explicit-any
+      const data: any = await res.json();
+      // deno-lint-ignore no-explicit-any
+      const metas: any[] = Array.isArray(data?.metas) ? data.metas : [];
+      if (metas.length > 0) {
+        if (parsed.year) {
+          matchedMeta =
+            metas.find((m) => String(m.releaseInfo || "").includes(String(parsed.year))) || metas[0];
+        } else {
+          matchedMeta = metas[0];
+        }
+        matchedType = mediaType;
+        break;
+      }
+    } catch {
+      // Try next media type
+    }
+  }
+
+  if (!matchedMeta?.id) {
+    return jsonResponse({
+      query: rawQuery,
+      cleanTitle: parsed.cleanTitle,
+      imdbId: null,
+      matchedTitle: null,
+      year: parsed.year,
+      type: matchedType,
+      languages: [],
+      subtitles: [],
+    }, 200);
+  }
+
+  const imdbId = String(matchedMeta.id);
+  const subTarget = matchedType === "series" && parsed.season !== null && parsed.episode !== null
+    ? `${imdbId}:${parsed.season}:${parsed.episode}`
+    : imdbId;
+  const osUrl = `https://opensubtitles-v3.strem.io/subtitles/${matchedType}/${encodeURIComponent(subTarget)}.json`;
+
+  // deno-lint-ignore no-explicit-any
+  let rawSubs: any[] = [];
+  try {
+    const osRes = await fetch(osUrl, { signal: timeoutSignal });
+    if (osRes.ok) {
+      // deno-lint-ignore no-explicit-any
+      const osData: any = await osRes.json();
+      if (Array.isArray(osData?.subtitles)) {
+        rawSubs = osData.subtitles;
+      }
+    }
+  } catch {
+    return errorResponse("Altyazı servisine erişilemedi", 502);
+  }
+
+  const langCounts = new Map<string, { code: string; flag: string; name: string; count: number }>();
+  const normalizedSubs = rawSubs
+    .filter((s) => typeof s?.url === "string" && s.url.startsWith("https://"))
+    .map((s) => {
+      const info = getSubLangInfo(String(s.lang || "und"));
+      const existing = langCounts.get(info.code);
+      if (existing) existing.count++;
+      else langCounts.set(info.code, { ...info, count: 1 });
+
+      const fileName = String(s.subtitleFileName || s.movieReleaseName || `subtitle-${s.id || "sub"}.srt`);
+      return {
+        id: String(s.id || fileName),
+        url: String(s.url),
+        lang: info.code,
+        flag: info.flag,
+        langName: info.name,
+        fileName,
+        releaseName: String(s.movieReleaseName || s.releaseGroup || ""),
+      };
+    });
+
+  const langPriority = (code: string): number => {
+    if (code === "tur" || code === "tr") return 0;
+    if (code === "eng" || code === "en") return 1;
+    return 2;
+  };
+
+  normalizedSubs.sort((a, b) => {
+    const pa = langPriority(a.lang);
+    const pb = langPriority(b.lang);
+    if (pa !== pb) return pa - pb;
+    return a.langName.localeCompare(b.langName, "tr");
+  });
+
+  const languages = Array.from(langCounts.values()).sort((a, b) => {
+    const pa = langPriority(a.code);
+    const pb = langPriority(b.code);
+    if (pa !== pb) return pa - pb;
+    return b.count - a.count;
+  });
+
+  return jsonResponse({
+    query: rawQuery,
+    cleanTitle: parsed.cleanTitle,
+    imdbId,
+    matchedTitle: String(matchedMeta.name || parsed.cleanTitle),
+    year: matchedMeta.releaseInfo ? String(matchedMeta.releaseInfo) : (parsed.year ? String(parsed.year) : null),
+    type: matchedType,
+    languages,
+    subtitles: normalizedSubs,
+  }, 200);
+}
+
+async function handleFetchExternalSubtitle(requestSignal: AbortSignal, url: URL): Promise<Response> {
+  const targetUrlRaw = (url.searchParams.get("url") || "").trim();
+  if (!targetUrlRaw) return errorResponse("Missing subtitle url", 400);
+
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(targetUrlRaw);
+  } catch {
+    return errorResponse("Invalid subtitle url", 400);
+  }
+
+  const host = parsedUrl.hostname.toLowerCase();
+  const isAllowedHost =
+    parsedUrl.protocol === "https:" &&
+    (host.endsWith(".strem.io") || host === "strem.io" || host.endsWith(".opensubtitles.org"));
+  if (!isAllowedHost) {
+    return errorResponse("Unsupported subtitle host", 403);
+  }
+
+  const timeoutSignal = AbortSignal.any([requestSignal, AbortSignal.timeout(15_000)]);
+  try {
+    const res = await fetch(parsedUrl.toString(), { signal: timeoutSignal });
+    if (!res.ok) return errorResponse(`Upstream HTTP ${res.status}`, 502);
+    const rawText = await res.text();
+    const vttText = srtToVtt(rawText);
+    return new Response(vttText, {
+      status: 200,
+      headers: {
+        "Content-Type": "text/vtt; charset=utf-8",
+        "Cache-Control": "no-store",
+      },
+    });
+  } catch {
+    return errorResponse("Altyazı indirilemedi", 502);
   }
 }
 
@@ -2366,6 +2684,14 @@ async function handleRequest(req: Request, requestSignal: AbortSignal): Promise<
     );
   }
 
+  if (path === "/api/subtitles/search" && req.method === "GET") {
+    return await handleSubtitleSearch(requestSignal, url);
+  }
+
+  if (path === "/api/subtitles/fetch-external" && req.method === "GET") {
+    return await handleFetchExternalSubtitle(requestSignal, url);
+  }
+
   const subFileMatch = /^\/api\/subtitles\/([^/]+)\/file\/(\d+)\.vtt$/i.exec(path);
   if (subFileMatch && req.method === "GET") {
     return await handleFileSubtitleRequest(
@@ -2379,6 +2705,7 @@ async function handleRequest(req: Request, requestSignal: AbortSignal): Promise<
   if (subMatch && req.method === "GET") {
     return await handleSubtitleRequest(
       requestSignal,
+      url,
       decodeURIComponent(subMatch[1]),
       subMatch[2],
       decodeURIComponent(subMatch[3]),

@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/css/player.css?v=20261115f" />
+  <link rel="stylesheet" href="/css/player.css?v=20261115h" />
   <link rel="stylesheet" href="/css/app-theme.css?v=20261115f" />
 </head>
 <body class="cinema-app">
@@ -241,7 +241,10 @@
                 <div id="subtitle-menu" class="ctrl-popover hidden">
                   <div class="popover-header">Altyazı Seçimi</div>
                   <div id="subtitle-menu-list" class="popover-list"></div>
-                  <button id="btn-menu-upload-sub" class="btn btn-secondary btn-xs btn-block" type="button">+ .SRT / .VTT Yükle</button>
+                  <div class="popover-actions-col">
+                    <button id="btn-menu-search-sub" class="btn btn-primary btn-xs btn-block" type="button">🔍 Altyazı Bul</button>
+                    <button id="btn-menu-upload-sub" class="btn btn-secondary btn-xs btn-block" type="button">+ .SRT / .VTT Yükle</button>
+                  </div>
                 </div>
               </div>
 
@@ -501,6 +504,9 @@
             </div>
             <div class="sub-upload-row">
               <input id="subtitle-file-input" type="file" accept=".srt,.vtt" hidden />
+              <button id="btn-search-subtitle" class="btn btn-primary btn-sm btn-block" type="button">
+                🔍 Altyazı Bul (Otomatik Ara)
+              </button>
               <button id="btn-upload-subtitle" class="btn btn-secondary btn-sm btn-block" type="button">
                 Harici .SRT / .VTT Altyazı Yükle
               </button>
@@ -553,7 +559,28 @@
     </section>
   </main>
 
+  <!-- Ücretsiz Otomatik Altyazı Arama Modalı -->
+  <div id="subtitle-search-modal" class="file-picker-modal hidden" role="dialog" aria-modal="true" aria-labelledby="sub-search-title">
+    <div class="file-picker-dialog sub-search-dialog">
+      <div class="file-picker-header">
+        <div>
+          <h2 id="sub-search-title">Altyazı Bul</h2>
+          <p id="sub-search-meta" class="file-picker-subtitle">Film veya dizi adına göre ücretsiz altyazı arayın.</p>
+        </div>
+        <button id="btn-close-sub-search" class="btn btn-ghost btn-sm" type="button">Kapat ✕</button>
+      </div>
+      <div class="sub-search-bar">
+        <input id="sub-search-input" class="sub-search-input" type="text" placeholder="Örn: Inception 2010 veya Breaking Bad S02E05" autocomplete="off" />
+        <button id="btn-sub-search-go" class="btn btn-primary btn-sm" type="button">Ara</button>
+      </div>
+      <div id="sub-search-langs" class="sub-lang-pills"></div>
+      <div id="sub-search-results" class="file-picker-list sub-search-results">
+        <div class="empty-list-msg">Arama yapmak için film/dizi adını girin veya bekleyin...</div>
+      </div>
+    </div>
+  </div>
+
   <script src="/js/app-theme.js?v=20261115f" defer></script>
-  <script type="module" src="/js/app.js?v=20261115g"></script>
+  <script type="module" src="/js/app.js?v=20261115h"></script>
 </body>
 </html>
