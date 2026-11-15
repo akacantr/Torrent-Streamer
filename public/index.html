@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TorrentPlayer — Akıllı Torrent Video Oynatıcı</title>
+  <link rel="stylesheet" href="/css/player.css" />
+</head>
+<body class="cinema-app">
+  <!-- Üst Marka Başlığı (Embed modunda gizlenir) -->
+  <header id="top-chrome" class="top-chrome">
+    <div class="brand-wrap">
+      <div class="brand-logo" aria-hidden="true">
+        <svg viewBox="0 0 36 36" fill="none">
+          <rect x="2" y="2" width="32" height="32" rx="9" fill="url(#brandGrad)" fill-opacity="0.16" stroke="url(#brandGrad)" stroke-width="1.5" />
+          <path d="M14.5 12.2L24.5 18L14.5 23.8V12.2Z" fill="url(#brandGrad)" />
+          <defs>
+            <linearGradient id="brandGrad" x1="2" y1="2" x2="34" y2="34" gradientUnits="userSpaceOnUse">
+              <stop stop-color="#38bdf8" />
+              <stop offset="1" stop-color="#818cf8" />
+            </linearGradient>
+          </defs>
+        </svg>
+      </div>
+      <div class="brand-text">
+        <div class="brand-title-row">
+          <h1 class="brand-title">TorrentPlayer</h1>
+        </div>
+        <p class="brand-subtitle">Torrent Video Oynatıcı · Seçmeli İndirme &amp; Otomatik Medya Analizi</p>
+      </div>
+    </div>
+
+    <div class="header-actions">
+      <button id="btn-header-toggle-input" class="btn btn-ghost btn-sm" type="button" title="Torrent giriş panelini göster/gizle">
+        <span class="icon-inline">⇅</span> Kaynak Paneli
+      </button>
+    </div>
+  </header>
+
+  <!-- Torrent Giriş ve Kaynak Bölümü (Embed modunda gizlenir) -->
+  <section id="torrent-input-section" class="torrent-input-section">
+    <div class="input-panel">
+      <form id="magnet-form" class="magnet-form" autocomplete="off">
+        <div class="magnet-field-wrap">
+          <svg class="field-icon" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+            <path d="M12.232 4.232a2.5 2.5 0 013.536 3.536l-1.225 1.224a.75.75 0 001.061 1.06l1.224-1.224a4 4 0 00-5.656-5.656l-3 3a4 4 0 00.225 5.865.75.75 0 00.977-1.138 2.5 2.5 0 01-.142-3.667l3-3z" />
+            <path d="M11.603 7.963a.75.75 0 00-.977 1.138 2.5 2.5 0 01.142 3.667l-3 3a2.5 2.5 0 01-3.536-3.536l1.225-1.224a.75.75 0 00-1.061-1.06l-1.224 1.224a4 4 0 105.656 5.656l3-3a4 4 0 00-.225-5.865z" />
+          </svg>
+          <input
+            id="magnet-input"
+            type="text"
+            class="magnet-input"
+            placeholder="Magnet bağlantısı yapıştırın (magnet:?xt=urn:btih:...)"
+            aria-label="Magnet URI bağlantısı"
+          />
+        </div>
+        <button id="btn-start-stream" class="btn btn-primary" type="submit">
+          <svg class="btn-svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+            <path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z" />
+          </svg>
+          Oynat (Stream Başlat)
+        </button>
+      </form>
+
+      <div class="input-actions-row">
+        <div id="torrent-dropzone" class="torrent-dropzone" tabindex="0" role="button" aria-label=".torrent dosyası yükle">
+          <input id="torrent-file-input" type="file" accept=".torrent,application/x-bittorrent" hidden />
+          <svg class="drop-icon" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+            <path d="M9.25 13.25a.75.75 0 001.5 0V4.636l2.955 3.129a.75.75 0 001.09-1.03l-4.25-4.5a.75.75 0 00-1.09 0l-4.25 4.5a.75.75 0 101.09 1.03L9.25 4.636v8.614z" />
+            <path d="M3.5 12.75a.75.75 0 00-1.5 0v2.5A2.75 2.75 0 004.75 18h10.5A2.75 2.75 0 0018 15.25v-2.5a.75.75 0 00-1.5 0v2.5c0 .69-.56 1.25-1.25 1.25H4.75c-.69 0-1.25-.56-1.25-1.25v-2.5z" />
+          </svg>
+          <span><strong>.torrent</strong> dosyasını sürükleyip bırakın veya <span class="link-accent">dosya seçin</span></span>
+        </div>
+      </div>
+
+      <div id="input-error-banner" class="error-banner hidden" role="alert"></div>
+    </div>
+  </section>
+
+  <!-- Ana Sinema Alanı -->
+  <main id="cinema-workspace" class="cinema-workspace">
+    <!-- Çekmece varsayılan olarak KAPALI başlar (drawer-open yok) -->
+    <div id="player-shell" class="player-shell" data-controls-visible="true">
+      <!-- Video Sahnesi -->
+      <div id="player-stage" class="player-stage">
+        <video id="cinema-video" crossorigin="anonymous" playsinline preload="metadata"></video>
+
+        <!-- Özel WebVTT/SRT Altyazı Katmanı (FFmpeg seek offset senkronlu) -->
+        <div id="subtitle-overlay" class="subtitle-overlay" aria-live="polite"></div>
+
+        <!-- Canlı Oynatma İstatistikleri HUD (📊 İstatistikler) -->
+        <section id="stats-overlay" class="stats-overlay hidden" aria-label="Canlı Oynatma İstatistikleri">
+          <div class="stats-header">
+            <span>📊 Canlı Oynatma İstatistikleri</span>
+            <button id="btn-close-stats" class="drawer-close" type="button" aria-label="İstatistikleri Kapat">✕</button>
+          </div>
+          <div id="stats-grid" class="stats-grid">
+            <div class="stat-row"><span>Ana Çözünürlük</span><strong id="stat-src-res">--</strong></div>
+            <div class="stat-row"><span>İzlenen (Ekran)</span><strong id="stat-disp-res">--</strong></div>
+            <div class="stat-row"><span>FPS (Kaynak / Anlık)</span><strong id="stat-fps">--</strong></div>
+            <div class="stat-row"><span>Atlanan Kareler</span><strong id="stat-dropped">--</strong></div>
+            <div class="stat-row"><span>Video &amp; HDR</span><strong id="stat-video">--</strong></div>
+            <div class="stat-row"><span>Ses &amp; Motor</span><strong id="stat-audio">--</strong></div>
+            <div class="stat-row"><span>Tampon &amp; Ağ</span><strong id="stat-network">--</strong></div>
+          </div>
+        </section>
+
+        <!-- Üst Bilgi ve Rozet Katmanı -->
+        <div class="player-top-bar">
+          <div class="player-meta-left">
+            <span id="player-title" class="player-title">Oynatmaya Hazır</span>
+            <!-- Sadece dosya analiz edildikten sonra dinamik doldurulur -->
+            <div id="codec-badges" class="codec-badges"></div>
+          </div>
+          <div class="player-top-actions">
+            <button id="btn-unlock-audio" class="btn-chip btn-chip-warn hidden" type="button" title="Web Audio motorunu etkinleştir">
+              🔊 Sesi Etkinleştir
+            </button>
+            <button id="btn-toggle-studio-top" class="btn-chip" type="button" title="Medya ve Ses Ayarları">
+              ⚙ Medya &amp; Ses Ayarları
+            </button>
+            <button id="btn-toggle-files-top" class="btn-chip" type="button" title="Torrent Dosyaları &amp; Altyazılar">
+              Dosyalar <span id="files-count-badge" class="mini-badge">0</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Çok Dosyalı Torrent İçin Seçmeli İndirme Ekranı -->
+        <div id="file-picker-overlay" class="file-picker-overlay hidden" role="dialog" aria-label="Dosya Seçimi">
+          <div class="file-picker-card">
+            <div class="file-picker-header">
+              <h2>İzlemek İstediğiniz Dosyayı Seçin</h2>
+              <p>Sadece seçtiğiniz video dosyası indirilir — torrentin tamamı gereksiz yere indirilmez.</p>
+            </div>
+            <div id="file-picker-list" class="file-picker-list"></div>
+          </div>
+        </div>
+
+        <!-- Merkez Durum / Yükleme / Büyük Oynat Katmanı -->
+        <div id="player-center-overlay" class="player-center-overlay">
+          <div id="player-idle-state" class="player-idle-state">
+            <div class="idle-halo">
+              <svg viewBox="0 0 48 48" fill="none">
+                <circle cx="24" cy="24" r="22" stroke="url(#idleGrad)" stroke-width="1.5" stroke-dasharray="4 4" />
+                <path d="M19 16.5L32 24L19 31.5V16.5Z" fill="url(#idleGrad)" />
+                <defs>
+                  <linearGradient id="idleGrad" x1="8" y1="8" x2="40" y2="40">
+                    <stop stop-color="#38bdf8" />
+                    <stop offset="1" stop-color="#818cf8" />
+                  </linearGradient>
+                </defs>
+              </svg>
+            </div>
+            <h2>Anında Torrent Video Akışı</h2>
+            <p>Yukarıdan bir magnet bağlantısı girin veya <code>.torrent</code> dosyası bırakın.</p>
+          </div>
+
+          <div id="player-loading-state" class="player-loading-state hidden">
+            <div class="cinema-spinner"></div>
+            <p id="player-loading-text">Torrent meta verisi alınıyor...</p>
+          </div>
+
+          <button id="btn-center-play" class="btn-center-play hidden" type="button" aria-label="Oynat">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.14v14l11-7-11-7z" /></svg>
+          </button>
+        </div>
+
+        <!-- Bildirim Toast -->
+        <div id="player-toast" class="player-toast hidden" role="status"></div>
+
+        <!-- Özel Sinema Kontrol Çubuğu -->
+        <div id="player-controls" class="player-controls">
+          <!-- Çift Katmanlı Arama Çubuğu + 100 Segment Torrent Parça Haritası -->
+          <div id="seek-container" class="seek-container" role="slider" aria-label="Video zaman çubuğu" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" tabindex="0">
+            <div class="seek-track">
+              <div id="piece-map-bar" class="piece-map-bar" title="Sıralı Torrent Parça Haritası (100 Segment)"></div>
+              <div id="buffered-bar" class="buffered-bar"></div>
+              <div id="played-bar" class="played-bar"></div>
+            </div>
+            <div id="seek-thumb" class="seek-thumb"></div>
+            <div id="seek-hover-tooltip" class="seek-hover-tooltip hidden">00:00</div>
+          </div>
+
+          <div class="controls-row">
+            <div class="controls-left">
+              <button id="btn-play-pause" class="ctrl-btn ctrl-btn-play" type="button" title="Oynat / Duraklat (Boşluk)" aria-label="Oynat veya Duraklat">
+                <svg id="icon-play" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.14v14l11-7-11-7z" /></svg>
+                <svg id="icon-pause" class="hidden" viewBox="0 0 24 24" fill="currentColor"><path d="M6 5h4v14H6V5zm8 0h4v14h-4V5z" /></svg>
+              </button>
+
+              <button id="btn-seek-back" class="ctrl-btn" type="button" title="10 saniye geri (Sol Ok)" aria-label="10 saniye geri">
+                <span class="ctrl-skip-txt">-10s</span>
+              </button>
+              <button id="btn-seek-fwd" class="ctrl-btn" type="button" title="10 saniye ileri (Sağ Ok)" aria-label="10 saniye ileri">
+                <span class="ctrl-skip-txt">+10s</span>
+              </button>
+
+              <div class="volume-wrap">
+                <button id="btn-mute" class="ctrl-btn" type="button" title="Sesi Kapat / Aç (M)" aria-label="Sesi Kapat veya Aç">
+                  <svg id="icon-vol-on" viewBox="0 0 24 24" fill="currentColor"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z" /></svg>
+                  <svg id="icon-vol-off" class="hidden" viewBox="0 0 24 24" fill="currentColor"><path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z" /></svg>
+                </button>
+                <input id="volume-slider" class="volume-slider" type="range" min="0" max="1" step="0.02" value="1" aria-label="Ses seviyesi" />
+              </div>
+
+              <div id="time-display" class="time-display">00:00 / 00:00</div>
+            </div>
+
+            <div class="controls-right">
+              <label class="speed-wrap" title="Oynatma Hızı">
+                <select id="speed-select" class="ctrl-select" aria-label="Oynatma hızı">
+                  <option value="0.5">0.5x</option>
+                  <option value="0.75">0.75x</option>
+                  <option value="1" selected>1x</option>
+                  <option value="1.25">1.25x</option>
+                  <option value="1.5">1.5x</option>
+                  <option value="2">2x</option>
+                </select>
+              </label>
+
+              <!-- Tek Tıkla Ses İzi Değiştirici -->
+              <div class="popover-ctrl-wrap">
+                <button id="btn-audio-tracks" class="ctrl-btn ctrl-btn-text" type="button" title="Ses İzi Değiştir">
+                  🎧 Ses İzi
+                </button>
+                <div id="audio-track-menu" class="ctrl-popover hidden">
+                  <div class="popover-header">Ses İzi Seçimi</div>
+                  <div id="audio-track-menu-list" class="popover-list"></div>
+                </div>
+              </div>
+
+              <!-- Tek Tıkla Altyazı Değiştirici -->
+              <div class="popover-ctrl-wrap">
+                <button id="btn-subtitles" class="ctrl-btn ctrl-btn-text" type="button" title="Altyazılar">
+                  CC <span id="sub-badge-dot" class="sub-dot hidden"></span>
+                </button>
+                <div id="subtitle-menu" class="ctrl-popover hidden">
+                  <div class="popover-header">Altyazı Seçimi</div>
+                  <div id="subtitle-menu-list" class="popover-list"></div>
+                  <button id="btn-menu-upload-sub" class="btn btn-secondary btn-xs btn-block" type="button">+ .SRT / .VTT Yükle</button>
+                </div>
+              </div>
+
+              <button id="btn-stats" class="ctrl-btn ctrl-btn-text" type="button" title="Canlı Oynatma İstatistikleri (I)">
+                📊 İstatistikler
+              </button>
+
+              <button id="btn-toggle-studio" class="ctrl-btn ctrl-btn-text" type="button" title="Medya ve Ses Ayarları (S)">
+                ⚙ Medya &amp; Ses Ayarları
+              </button>
+
+              <button id="btn-toggle-files" class="ctrl-btn ctrl-btn-text" type="button" title="Torrent Dosyaları">
+                Dosyalar
+              </button>
+
+              <button id="btn-pip" class="ctrl-btn" type="button" title="Resim İçinde Resim (PiP)" aria-label="Resim İçinde Resim">
+                <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 7h-8v6h8V7zm2-4H3c-1.1 0-2 .9-2 2v14c0 1.1.9 1.98 2 1.98h18c1.1 0 2-.88 2-1.98V5c0-1.1-.9-2-2-2zm0 16.01H3V4.98h18v14.03z" /></svg>
+              </button>
+
+              <button id="btn-fullscreen" class="ctrl-btn" type="button" title="Tam Ekran (F)" aria-label="Tam Ekran">
+                <svg id="icon-fs-enter" viewBox="0 0 24 24" fill="currentColor"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z" /></svg>
+                <svg id="icon-fs-exit" class="hidden" viewBox="0 0 24 24" fill="currentColor"><path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z" /></svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Yan Adaptif Medya / Ses Stüdyosu ve Dosyalar Çekmecesi -->
+      <aside id="cinema-drawer" class="cinema-drawer" aria-label="Medya Ayarları ve Dosyalar">
+        <div class="drawer-tabs">
+          <button id="tab-btn-studio" class="drawer-tab active" type="button" data-tab="studio">
+            Medya &amp; Ses Ayarları
+          </button>
+          <button id="tab-btn-files" class="drawer-tab" type="button" data-tab="files">
+            Dosyalar &amp; Altyazı
+          </button>
+          <button id="btn-close-drawer" class="drawer-close" type="button" title="Paneli Kapat" aria-label="Paneli Kapat">✕</button>
+        </div>
+
+        <!-- TAB 1: Adaptif Medya, HDR & Ses Kontrol Paneli -->
+        <div id="tab-studio" class="drawer-body">
+          <!-- Dosyada Algılanan Teknolojiler -->
+          <div id="section-detected-tech" class="studio-card">
+            <div class="studio-label-row">
+              <span class="studio-label">Dosyada Algılanan Teknolojiler</span>
+              <span id="stream-mode-pill" class="mode-pill">Hazır</span>
+            </div>
+            <div id="detected-tech-pills" class="tech-pills">
+              <span class="tech-pill muted">Video seçildiğinde otomatik analiz edilir</span>
+            </div>
+          </div>
+
+          <!-- Görüntü & HDR Kontrolleri -->
+          <div id="section-video-hdr" class="studio-card hidden">
+            <div class="studio-label-row">
+              <span class="studio-label">Görüntü &amp; HDR Kontrolleri</span>
+              <span id="hdr-status-badge" class="cap-badge">SDR</span>
+            </div>
+            <div id="video-tech-summary" class="video-tech-summary"></div>
+
+            <div id="hdr-tonemap-panel" class="hdr-tonemap-panel">
+              <div class="studio-label-row">
+                <span class="sub-section-title">HDR Ton Eşleme / Görüntü Ayarları</span>
+                <button id="btn-reset-video-filters" class="link-btn" type="button">Sıfırla</button>
+              </div>
+              <div class="slider-group">
+                <div class="slider-header">
+                  <label for="slider-vid-brightness">Parlaklık</label>
+                  <span id="val-vid-brightness" class="slider-readout">100%</span>
+                </div>
+                <input id="slider-vid-brightness" class="studio-slider" type="range" min="0.6" max="1.6" step="0.02" value="1" />
+              </div>
+              <div class="slider-group">
+                <div class="slider-header">
+                  <label for="slider-vid-contrast">Kontrast</label>
+                  <span id="val-vid-contrast" class="slider-readout">100%</span>
+                </div>
+                <input id="slider-vid-contrast" class="studio-slider" type="range" min="0.6" max="1.6" step="0.02" value="1" />
+              </div>
+              <div class="slider-group">
+                <div class="slider-header">
+                  <label for="slider-vid-saturation">Doygunluk (Renk)</label>
+                  <span id="val-vid-saturation" class="slider-readout">100%</span>
+                </div>
+                <input id="slider-vid-saturation" class="studio-slider" type="range" min="0.5" max="1.8" step="0.02" value="1" />
+              </div>
+            </div>
+
+            <div>
+              <label for="video-mode-select" class="studio-label">Video Akış Modu</label>
+              <select id="video-mode-select" class="studio-select">
+                <option value="copy" selected>Doğrudan Kopyala (Hızlı)</option>
+                <option value="transcode">H.264 Canlı Dönüştür (HEVC Uyumlu)</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Ses & Çıkış Ayarları -->
+          <div id="section-audio" class="studio-card">
+            <div class="studio-label-row">
+              <span class="studio-label">Ses &amp; Çıkış Ayarları</span>
+              <span id="audio-capabilities-info" class="cap-badge">Web Audio Bekleniyor</span>
+            </div>
+
+            <div class="studio-grid-2">
+              <div>
+                <label for="audio-track-select" class="studio-label">Ses İzi</label>
+                <select id="audio-track-select" class="studio-select">
+                  <option value="0">Varsayılan Akış</option>
+                </select>
+              </div>
+              <div>
+                <label for="audio-output-mode" class="studio-label">Çıkış Modu</label>
+                <select id="audio-output-mode" class="studio-select">
+                  <option value="stereo">Stereo (Doğal Çıkış)</option>
+                  <option value="cinema51">5.1 Sinema Ayrık (6 Kanal)</option>
+                  <option value="atmos">5.1 Surround + Dolby Spatial</option>
+                  <option value="passthrough">Bitstream Passthrough (Donanım)</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- Stereo Parçalar İçin Temiz Kontroller + İsteğe Bağlı Sanal Upmix -->
+            <div id="stereo-controls-card" class="adaptive-subcard">
+              <div class="stereo-info-note">
+                Aktif ses izi <strong>Stereo (2 Kanal)</strong> olarak algılandı. Temiz stereo çıkış ve diyalog netleştirme etkin.
+              </div>
+              <label class="toggle-row compact-toggle" for="toggle-virtual-upmix">
+                <span class="toggle-copy">
+                  <strong>Sanal 5.1 / Atmos Upmix Aç</strong>
+                  <small>Stereo sesi sanal çevresel alana genişletir</small>
+                </span>
+                <input id="toggle-virtual-upmix" class="toggle-input" type="checkbox" />
+                <span class="toggle-switch" aria-hidden="true"></span>
+              </label>
+            </div>
+
+            <!-- 5.1 / 7.1 veya Upmix Açıkken Gösterilen 6-Kanal Görselleştirici -->
+            <div id="surround-visualizer-card" class="adaptive-subcard hidden">
+              <div class="preset-chips" role="group" aria-label="Hızlı Ses Ön Ayarları">
+                <button class="preset-chip" type="button" data-preset="cinema51">Sinema 5.1</button>
+                <button class="preset-chip" type="button" data-preset="atmos">Dolby Spatial</button>
+                <button class="preset-chip" type="button" data-preset="dialogue">Diyalog Odaklı</button>
+                <button class="preset-chip" type="button" data-preset="passthrough">Saf (Flat)</button>
+              </div>
+
+              <div class="visualizer-grid">
+                <div id="speaker-stage" class="speaker-stage" data-preset="cinema51">
+                  <div class="atmos-height-ring" title="Dolby Spatial Sanal Yükseklik Alanı"></div>
+                  <div class="listener-node" title="Dinleyici Konumu">
+                    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" /></svg>
+                  </div>
+                  <button type="button" class="spk-node spk-l" data-ch="L" title="Sol Ön (L)"><span>L</span></button>
+                  <button type="button" class="spk-node spk-c" data-ch="C" title="Merkez / Diyalog (C)"><span>C</span></button>
+                  <button type="button" class="spk-node spk-r" data-ch="R" title="Sağ Ön (R)"><span>R</span></button>
+                  <button type="button" class="spk-node spk-lfe" data-ch="LFE" title="Subwoofer (LFE)"><span>LFE</span></button>
+                  <button type="button" class="spk-node spk-ls" data-ch="LS" title="Sol Surround (LS)"><span>LS</span></button>
+                  <button type="button" class="spk-node spk-rs" data-ch="RS" title="Sağ Surround (RS)"><span>RS</span></button>
+                </div>
+
+                <div class="vu-meters" aria-label="6 Kanal VU Metre">
+                  <div class="vu-col" data-ch="L">
+                    <div class="vu-track"><div class="vu-fill" id="vu-fill-L"></div></div>
+                    <span class="vu-label">L</span>
+                    <span class="vu-val" id="vu-val-L">0</span>
+                  </div>
+                  <div class="vu-col" data-ch="C">
+                    <div class="vu-track"><div class="vu-fill vu-center" id="vu-fill-C"></div></div>
+                    <span class="vu-label">C</span>
+                    <span class="vu-val" id="vu-val-C">0</span>
+                  </div>
+                  <div class="vu-col" data-ch="R">
+                    <div class="vu-track"><div class="vu-fill" id="vu-fill-R"></div></div>
+                    <span class="vu-label">R</span>
+                    <span class="vu-val" id="vu-val-R">0</span>
+                  </div>
+                  <div class="vu-col" data-ch="LS">
+                    <div class="vu-track"><div class="vu-fill vu-surround" id="vu-fill-LS"></div></div>
+                    <span class="vu-label">LS</span>
+                    <span class="vu-val" id="vu-val-LS">0</span>
+                  </div>
+                  <div class="vu-col" data-ch="RS">
+                    <div class="vu-track"><div class="vu-fill vu-surround" id="vu-fill-RS"></div></div>
+                    <span class="vu-label">RS</span>
+                    <span class="vu-val" id="vu-val-RS">0</span>
+                  </div>
+                  <div class="vu-col" data-ch="LFE">
+                    <div class="vu-track"><div class="vu-fill vu-lfe" id="vu-fill-LFE"></div></div>
+                    <span class="vu-label">LFE</span>
+                    <span class="vu-val" id="vu-val-LFE">0</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Kanal Kazançları & Gece Modu -->
+            <div class="studio-label-row">
+              <span class="sub-section-title">Kanal Kazancı &amp; Dinamik Aralık</span>
+              <button id="btn-reset-gains" class="link-btn" type="button">Sıfırla</button>
+            </div>
+
+            <div class="slider-group">
+              <div class="slider-header">
+                <label for="slider-center-db">Diyalog Netleştirme / Merkez (dB)</label>
+                <span id="val-center-db" class="slider-readout">+0.0 dB</span>
+              </div>
+              <input id="slider-center-db" class="studio-slider" type="range" min="-12" max="12" step="0.5" value="0" />
+            </div>
+
+            <div id="surround-only-sliders" class="surround-only-sliders hidden">
+              <div class="slider-group">
+                <div class="slider-header">
+                  <label for="slider-lfe-db">Subwoofer (LFE Bas dB)</label>
+                  <span id="val-lfe-db" class="slider-readout">+0.0 dB</span>
+                </div>
+                <input id="slider-lfe-db" class="studio-slider" type="range" min="-12" max="12" step="0.5" value="0" />
+              </div>
+
+              <div class="slider-group">
+                <div class="slider-header">
+                  <label for="slider-surround-db">Surround Genişlik dB</label>
+                  <span id="val-surround-db" class="slider-readout">+0.0 dB</span>
+                </div>
+                <input id="slider-surround-db" class="studio-slider" type="range" min="-12" max="12" step="0.5" value="0" />
+              </div>
+            </div>
+
+            <div class="slider-group">
+              <div class="slider-header">
+                <label for="slider-master-gain">Ana Çıkış Kazancı</label>
+                <span id="val-master-gain" class="slider-readout">100%</span>
+              </div>
+              <input id="slider-master-gain" class="studio-slider" type="range" min="0.5" max="1.5" step="0.05" value="1" />
+            </div>
+
+            <label class="toggle-row" for="toggle-night-mode">
+              <span class="toggle-copy">
+                <strong>Gece Modu (DRC)</strong>
+                <small>Patlamaları yumuşatır, konuşmaları net tutar</small>
+              </span>
+              <input id="toggle-night-mode" class="toggle-input" type="checkbox" />
+              <span class="toggle-switch" aria-hidden="true"></span>
+            </label>
+          </div>
+        </div>
+
+        <!-- TAB 2: Dosya Listesi & Altyazılar -->
+        <div id="tab-files" class="drawer-body hidden">
+          <div class="studio-card">
+            <div class="studio-label-row">
+              <span class="studio-label">Altyazı Yönetimi</span>
+              <span id="active-subtitle-status" class="cap-badge">Kapalı</span>
+            </div>
+            <div id="subtitle-drawer-list" class="subtitle-drawer-list">
+              <button class="sub-item active" type="button" data-sub-type="off">Altyazı Kapalı</button>
+            </div>
+            <div class="sub-upload-row">
+              <input id="subtitle-file-input" type="file" accept=".srt,.vtt" hidden />
+              <button id="btn-upload-subtitle" class="btn btn-secondary btn-sm btn-block" type="button">
+                Harici .SRT / .VTT Altyazı Yükle
+              </button>
+            </div>
+          </div>
+
+          <div class="studio-card">
+            <div class="studio-label-row">
+              <span class="studio-label">Torrent İçeriği</span>
+              <span id="drawer-files-summary" class="cap-badge">0 dosya</span>
+            </div>
+            <div id="torrent-files-list" class="torrent-files-list">
+              <div class="empty-list-msg">Henüz aktif bir torrent yok.</div>
+            </div>
+          </div>
+        </div>
+      </aside>
+    </div>
+
+    <!-- Canlı Torrent Telemetri Çubuğu + Tek Tıkla İndirme -->
+    <section id="telemetry-bar" class="telemetry-bar" aria-label="Canlı Torrent Telemetrisi">
+      <div class="telemetry-identity">
+        <span id="tel-status-dot" class="status-dot idle"></span>
+        <div class="telemetry-name-wrap">
+          <span id="tel-name" class="tel-name">Aktif akış yok</span>
+          <span id="tel-infohash" class="tel-hash">Magnet veya .torrent yükleyin</span>
+        </div>
+      </div>
+
+      <div class="telemetry-metrics">
+        <div class="metric-cell">
+          <span class="metric-label">İndirme</span>
+          <span id="tel-down-speed" class="metric-value accent-cyan">0 KB/s</span>
+        </div>
+        <div class="metric-cell">
+          <span class="metric-label">Yükleme</span>
+          <span id="tel-up-speed" class="metric-value">0 KB/s</span>
+        </div>
+        <div class="metric-cell">
+          <span class="metric-label">Aktif Eşler</span>
+          <span id="tel-peers" class="metric-value">0</span>
+        </div>
+        <div class="metric-cell">
+          <span class="metric-label">Seçili Dosya</span>
+          <span id="tel-progress" class="metric-value accent-emerald">0%</span>
+        </div>
+        <div class="metric-cell">
+          <span class="metric-label">Kalan Süre (ETA)</span>
+          <span id="tel-eta" class="metric-value">--</span>
+        </div>
+      </div>
+
+      <div class="telemetry-right">
+        <div class="piece-legend" title="Torrent parça haritası durumu">
+          <span class="legend-item"><i class="lg-dot lg-done"></i> İndirildi</span>
+          <span class="legend-item"><i class="lg-dot lg-active"></i> Öncelikli</span>
+          <span class="legend-item"><i class="lg-dot lg-missing"></i> Bekliyor</span>
+        </div>
+
+        <button id="btn-save-video" class="btn btn-save-video" type="button" disabled>
+          ⏳ Dosya Bekleniyor
+        </button>
+      </div>
+    </section>
+  </main>
+
+  <script type="module" src="/js/app.js"></script>
+</body>
+</html>

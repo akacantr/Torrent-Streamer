@@ -1,0 +1,4 @@
+node_modules
+.torrent-cache
+.git
+.env

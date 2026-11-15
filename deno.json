@@ -1,0 +1,12 @@
+{
+  "tasks": {
+    "start": "deno run -A server.ts"
+  },
+  "nodeModulesDir": "auto",
+  "allowScripts": [
+    "npm:node-datachannel"
+  ],
+  "imports": {
+    "webtorrent": "npm:webtorrent"
+  }
+}
