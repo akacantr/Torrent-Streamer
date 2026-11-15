@@ -849,12 +849,30 @@ function buildAudioLabel(
   return `${langTag}${titlePart}${codec.toUpperCase()} ${chTag}${atmosTag}`.trim();
 }
 
+async function getReadyLocalFilePath(
+  torrent: TorrentInstance | null | undefined,
+  fileIndex: number,
+): Promise<string | null> {
+  const file: TorrentFile | undefined = torrent?.files?.[fileIndex];
+  if (!file || !file.done || !torrent?.path || !file.path) return null;
+  const candidate = resolve(torrent.path, file.path);
+  try {
+    const st = await Deno.stat(candidate);
+    if (st.isFile && st.size >= file.length) return candidate;
+  } catch {
+    // Fall back to HTTP range stream
+  }
+  return null;
+}
+
 async function runProbe(infoHash: string, fileIndex: number, signal?: AbortSignal): Promise<ProbeResponse> {
   const cacheKey = `${infoHash.toLowerCase()}:${fileIndex}`;
   const cached = probeCache.get(cacheKey);
   if (cached) return cached;
 
-  const streamUrl = `http://127.0.0.1:${actualListeningPort}/api/stream/${infoHash}/${fileIndex}`;
+  const torrent = findTorrentByHash(infoHash);
+  const localPath = await getReadyLocalFilePath(torrent, fileIndex);
+  const inputSource = localPath ?? `http://127.0.0.1:${actualListeningPort}/api/stream/${infoHash}/${fileIndex}`;
   const timeoutSignal = AbortSignal.timeout(45_000);
   const combinedSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
 
@@ -868,10 +886,10 @@ async function runProbe(infoHash: string, fileIndex: number, signal?: AbortSigna
       "-show_streams",
       "-show_chapters",
       "-probesize",
-      "5M",
+      "20M",
       "-analyzeduration",
-      "5M",
-      streamUrl,
+      "10M",
+      inputSource,
     ],
     stdout: "piped",
     stderr: "piped",
@@ -1278,7 +1296,8 @@ async function handlePlayRequest(
     return errorResponse("Client disconnected", 499);
   }
 
-  const streamUrl = `http://127.0.0.1:${actualListeningPort}/api/stream/${torrent.infoHash}/${fileIndex}`;
+  const localPath = await getReadyLocalFilePath(torrent, fileIndex);
+  const streamUrl = localPath ?? `http://127.0.0.1:${actualListeningPort}/api/stream/${torrent.infoHash}/${fileIndex}`;
   const args: string[] = [
     "-hide_banner",
     "-loglevel",
@@ -1453,15 +1472,44 @@ function buildSubtitleLabel(
   return `${langTag}${titlePart}${codecTag}`.trim();
 }
 
+async function readTorrentFileBytes(file: TorrentFile, timeoutMs = 15_000): Promise<Uint8Array> {
+  if (typeof file.arrayBuffer === "function") {
+    const buf = await Promise.race([
+      file.arrayBuffer(),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Subtitle read timeout")), timeoutMs)),
+    ]);
+    return new Uint8Array(buf);
+  }
+  return await Promise.race([
+    new Promise<Uint8Array>((resolveBytes, rejectBytes) => {
+      const chunks: Uint8Array[] = [];
+      let total = 0;
+      const rs = file.createReadStream();
+      rs.on("data", (chunk: Uint8Array) => {
+        const copy = new Uint8Array(chunk);
+        chunks.push(copy);
+        total += copy.byteLength;
+      });
+      rs.on("end", () => {
+        const out = new Uint8Array(total);
+        let offset = 0;
+        for (const c of chunks) {
+          out.set(c, offset);
+          offset += c.byteLength;
+        }
+        resolveBytes(out);
+      });
+      rs.on("error", (err: unknown) => rejectBytes(err));
+    }),
+    new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Subtitle read timeout")), timeoutMs)),
+  ]);
+}
+
 async function convertTorrentSubFileToVtt(
   file: TorrentFile,
   signal?: AbortSignal,
 ): Promise<string> {
-  const buf = await Promise.race([
-    file.arrayBuffer(),
-    new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Subtitle read timeout")), 8_000)),
-  ]);
-  const bytes = new Uint8Array(buf);
+  const bytes = await readTorrentFileBytes(file, 15_000);
   const ext = extname(file.name).toLowerCase();
 
   if (ext === ".vtt" || ext === ".srt") {
@@ -1501,8 +1549,10 @@ async function extractEmbeddedSubVtt(
   const cached = vttCache.get(cacheKey);
   if (cached) return cached;
 
-  const streamUrl = `http://127.0.0.1:${actualListeningPort}/api/stream/${infoHash}/${fileIndex}`;
-  const timeoutSignal = AbortSignal.timeout(45_000);
+  const torrent = findTorrentByHash(infoHash);
+  const localPath = await getReadyLocalFilePath(torrent, fileIndex);
+  const inputSource = localPath ?? `http://127.0.0.1:${actualListeningPort}/api/stream/${infoHash}/${fileIndex}`;
+  const timeoutSignal = AbortSignal.timeout(localPath ? 45_000 : 25_000);
   const combinedSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
 
   const output = await new Deno.Command("ffmpeg", {
@@ -1511,7 +1561,7 @@ async function extractEmbeddedSubVtt(
       "-loglevel",
       "error",
       "-i",
-      streamUrl,
+      inputSource,
       "-map",
       `0:s:${subOrder}`,
       "-f",
@@ -1757,7 +1807,13 @@ async function handleSubtitleRequest(
       },
     });
   } catch {
-    return errorResponse("Subtitle track not found or failed to extract", 404);
+    const fileDone = Boolean(torrent.files[fileIndex]?.done);
+    return errorResponse(
+      fileDone
+        ? "Subtitle track not found or failed to extract"
+        : "Video is still downloading; embedded subtitle extraction is pending",
+      fileDone ? 404 : 503,
+    );
   }
 }
 

@@ -843,6 +843,8 @@ function updateTelemetry(st) {
       ? state.statusFiles.find((f) => f.index === state.activeFileIndex)
       : null;
 
+  void retryProbeAndSubtitlesIfNeeded();
+
   if (state.activeFileIndex !== null) {
     const selProg =
       typeof st.selectedFileProgress === 'number'
@@ -1091,13 +1093,15 @@ async function selectAndPlayFile(fileIndex, expectedSeq = state.loadSeq) {
   await loadPlaybackSource(resumeAt, true);
 }
 
-async function prepareSubtitlesBeforePlayback(fileIndex, expectedSeq) {
+async function prepareSubtitlesBeforePlayback(fileIndex, expectedSeq, { preserveActive = false } = {}) {
   if (!state.infoHash) return;
-  state.subtitles.preparedTracks = [];
-  state.subtitles.activeId = 'off';
-  state.subtitles.cues = [];
-  detachVideoTrackElement();
-  if (el.subtitleOverlay) el.subtitleOverlay.innerHTML = '';
+  if (!preserveActive) {
+    state.subtitles.preparedTracks = [];
+    state.subtitles.activeId = 'off';
+    state.subtitles.cues = [];
+    detachVideoTrackElement();
+    if (el.subtitleOverlay) el.subtitleOverlay.innerHTML = '';
+  }
 
   try {
     const res = await fetch(
@@ -1142,15 +1146,23 @@ async function prepareSubtitlesBeforePlayback(fileIndex, expectedSeq) {
 
     state.subtitles.preparedTracks = prepared;
 
-    // Auto-select Turkish (tur/tr) if ready, otherwise the first ready track
+    // Auto-select Turkish (tur/tr) if ready, otherwise the first ready track (unless user already picked one)
     const isTurkish = (s) => {
       const lang = (s.language || '').toLowerCase();
       const title = (s.title || '').toLowerCase();
       return lang === 'tur' || lang === 'tr' || title.includes('türk') || title.includes('turk');
     };
 
+    const currentActive =
+      preserveActive && state.subtitles.activeId !== 'off'
+        ? prepared.find((s) => s.id === state.subtitles.activeId && s.isReady)
+        : null;
+
     const preferred =
-      prepared.find((s) => s.isReady && isTurkish(s)) || prepared.find((s) => s.isReady);
+      currentActive ||
+      (state.subtitles.activeId === 'off'
+        ? prepared.find((s) => s.isReady && isTurkish(s)) || prepared.find((s) => s.isReady)
+        : null);
 
     if (preferred) {
       state.subtitles.activeId = preferred.id;
@@ -1158,13 +1170,67 @@ async function prepareSubtitlesBeforePlayback(fileIndex, expectedSeq) {
       if (preferred.blobUrl) {
         attachVideoTrackElement(preferred.blobUrl, preferred.label || 'Altyazı');
       }
-      renderActiveSubtitleCue(0);
+      renderActiveSubtitleCue(getCurrentPlaybackTime());
     }
   } catch (_) {
     // Keep going even if subtitle preparation failed
   }
 
   populateSubtitlesList();
+}
+
+async function retryProbeAndSubtitlesIfNeeded() {
+  if (!state.infoHash || state.activeFileIndex === null) return;
+  if (state._probeRetryInFlight) return;
+  const now = Date.now();
+  if (now - (state._lastProbeRetryAt || 0) < 4000) return;
+
+  const fileIndex = state.activeFileIndex;
+  const expectedSeq = state.loadSeq;
+  const needsProbe = !state.probeData;
+
+  const activeSf = state.statusFiles?.find((f) => f.index === fileIndex);
+  const hasPendingPrepared = state.subtitles.preparedTracks.some((s) => !s.isReady);
+  const hasDoneSubFile = state.subtitles.preparedTracks.some(
+    (s) => !s.isReady && s.kind === 'torrent' && state.statusFiles?.find((f) => f.index === s.fileIndex)?.done,
+  );
+  const needsSubRefresh =
+    hasDoneSubFile || (hasPendingPrepared && Boolean(activeSf?.done) && !state._subsRefreshedAfterDone);
+
+  if (!needsProbe && !needsSubRefresh) return;
+
+  state._probeRetryInFlight = true;
+  state._lastProbeRetryAt = now;
+  try {
+    if (needsProbe) {
+      const res = await fetch(
+        `/api/torrent/${encodeURIComponent(state.infoHash)}/probe/${fileIndex}`,
+      );
+      if (res.ok && expectedSeq === state.loadSeq) {
+        const probe = await readJsonSafe(res);
+        if (probe && (probe.video?.length > 0 || probe.audio?.length > 0)) {
+          state.probeData = probe;
+          if (Number(probe.duration) > 0) state.totalDuration = Number(probe.duration);
+          populateAudioTracksUi();
+          adaptControlsToAudioTrack({ autoSelectMode: false });
+          renderDetectedTechnologies();
+          renderVideoHdrPanel();
+          renderCodecBadges();
+          await prepareSubtitlesBeforePlayback(fileIndex, expectedSeq, { preserveActive: true });
+          return;
+        }
+      }
+    }
+
+    if (needsSubRefresh && expectedSeq === state.loadSeq) {
+      if (activeSf?.done) state._subsRefreshedAfterDone = true;
+      await prepareSubtitlesBeforePlayback(fileIndex, expectedSeq, { preserveActive: true });
+    }
+  } catch (_) {
+    // Ignore transient probe/subtitle retry errors
+  } finally {
+    state._probeRetryInFlight = false;
+  }
 }
 
 function getSelectedAudioTrack() {
@@ -1767,12 +1833,17 @@ async function selectSubtitleItem(item) {
     if (sub.vttUrl) {
       try {
         const res = await fetch(sub.vttUrl);
+        if (res.status === 503) {
+          showToast('Video indirildikçe altyazı hazırlanıyor, birazdan tekrar deneyin.');
+          return;
+        }
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const vttText = await res.text();
         const blob = new Blob([vttText], { type: 'text/vtt;charset=utf-8' });
         const blobUrl = URL.createObjectURL(blob);
         sub.cues = parseWebVtt(vttText);
         sub.blobUrl = blobUrl;
+        sub.isReady = true;
         applyWebVttText(sub.id, item.label, vttText, blobUrl);
         return;
       } catch (_) {
@@ -1786,9 +1857,15 @@ async function selectSubtitleItem(item) {
     const url = `/api/subtitles/${encodeURIComponent(state.infoHash)}/${state.activeFileIndex}/${item.subOrder}.vtt`;
     try {
       const res = await fetch(url);
+      if (res.status === 503) {
+        showToast('Video indirildikçe gömülü altyazı hazırlanıyor, birazdan tekrar deneyin.');
+        return;
+      }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const vttText = await res.text();
-      applyWebVttText(item.id, item.label, vttText, url);
+      const blob = new Blob([vttText], { type: 'text/vtt;charset=utf-8' });
+      const blobUrl = URL.createObjectURL(blob);
+      applyWebVttText(item.id, item.label, vttText, blobUrl);
     } catch (_) {
       showToast('Gömülü altyazı yüklenemedi.');
     }
@@ -2407,6 +2484,7 @@ function bindEvents() {
       state.totalDuration = el.video.duration;
     }
     updateTimeAndSeekUi();
+    void retryProbeAndSubtitlesIfNeeded();
   });
 
   el.video.addEventListener('canplay', () => {
