@@ -4,6 +4,8 @@ import { extname, join, normalize, resolve, sep } from "node:path";
 
 const PORT = Number(Deno.env.get("PORT") || "8080");
 const HOST = Deno.env.get("HOST") || "0.0.0.0";
+const TORRENT_TTL_MINUTES = Math.max(5, Number(Deno.env.get("TORRENT_TTL_MINUTES") || "60") || 60);
+const TORRENT_TTL_MS = TORRENT_TTL_MINUTES * 60_000;
 const PUBLIC_DIR = resolve(Deno.cwd(), "public");
 const CACHE_DIR = resolve(Deno.cwd(), ".torrent-cache");
 const DEMO_FILENAME = "demo-5.1-v2.mkv";
@@ -205,6 +207,7 @@ interface TorrentPieceTracker {
   headerFooterPrioritized: Set<number>;
   headerFooterRanges: Array<{ from: number; to: number }>;
   slidingWindows: Map<number, { from: number; to: number }>;
+  lastAccessedAt: number;
 }
 
 const pieceTrackers = new Map<string, TorrentPieceTracker>();
@@ -291,11 +294,41 @@ function getTracker(infoHash: string): TorrentPieceTracker {
       headerFooterPrioritized: new Set<number>(),
       headerFooterRanges: [],
       slidingWindows: new Map<number, { from: number; to: number }>(),
+      lastAccessedAt: Date.now(),
     };
     pieceTrackers.set(key, tracker);
+  } else {
+    tracker.lastAccessedAt = Date.now();
   }
   return tracker;
 }
+
+// Periodically evict inactive torrents & delete their downloaded files from disk
+setInterval(() => {
+  const now = Date.now();
+  for (const t of [...client.torrents]) {
+    if (!t || t.destroyed || !t.infoHash) continue;
+    const key = t.infoHash.toLowerCase();
+    const tracker = pieceTrackers.get(key);
+    const lastActive = tracker?.lastAccessedAt ?? now;
+    if (now - lastActive < TORRENT_TTL_MS) continue;
+
+    const torrentPath = typeof t.path === "string" ? t.path : "";
+    console.log(`[Cleanup] Removing inactive torrent ${key} (idle > ${TORRENT_TTL_MINUTES}m)`);
+    try {
+      t.destroy({ destroyStore: true }, () => {
+        if (torrentPath) {
+          Deno.remove(torrentPath, { recursive: true }).catch(() => {});
+        }
+      });
+    } catch {
+      if (torrentPath) {
+        Deno.remove(torrentPath, { recursive: true }).catch(() => {});
+      }
+    }
+    pieceTrackers.delete(key);
+  }
+}, 5 * 60_000);
 
 function attachTorrentListeners(torrent: TorrentInstance): void {
   if (!torrent || torrent._torrentStreamerListenersAttached) return;

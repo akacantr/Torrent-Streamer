@@ -171,6 +171,7 @@ const el = {
   telUpSpeed: document.getElementById('tel-up-speed'),
   telPeers: document.getElementById('tel-peers'),
   telProgress: document.getElementById('tel-progress'),
+  telClientBuffer: document.getElementById('tel-client-buffer'),
   telEta: document.getElementById('tel-eta'),
   btnSaveVideo: /** @type {HTMLButtonElement | null} */ (document.getElementById('btn-save-video')),
 
@@ -435,19 +436,19 @@ function updateTimeAndSeekUi(overrideTime = null) {
   if (el.seekThumb) el.seekThumb.style.left = `${pct}%`;
   if (el.seekContainer) el.seekContainer.setAttribute('aria-valuenow', String(Math.round(pct)));
 
-  if (el.bufferedBar && duration > 0 && el.video.buffered.length > 0) {
+  let bufPct = 0;
+  if (duration > 0 && el.video.buffered.length > 0) {
     try {
       const bufEnd = el.video.buffered.end(el.video.buffered.length - 1);
       const effectiveBufEnd =
         state.streamMode === 'remux' ? state.streamStartOffset + bufEnd : bufEnd;
-      const bufPct = Math.max(0, Math.min(100, (effectiveBufEnd / duration) * 100));
-      el.bufferedBar.style.width = `${bufPct}%`;
+      bufPct = Math.max(0, Math.min(100, (effectiveBufEnd / duration) * 100));
     } catch (_) {
       // Ignore transient buffered errors
     }
-  } else if (el.bufferedBar) {
-    el.bufferedBar.style.width = '0%';
   }
+  if (el.bufferedBar) el.bufferedBar.style.width = `${bufPct}%`;
+  if (el.telClientBuffer) el.telClientBuffer.textContent = `${bufPct.toFixed(1)}%`;
 
   renderActiveSubtitleCue(current);
 }

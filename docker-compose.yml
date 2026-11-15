@@ -6,6 +6,7 @@ services:
     environment:
       - PORT=8080
       - HOST=0.0.0.0
+      - TORRENT_TTL_MINUTES=60
     ports:
       - "${HOST_PORT:-8088}:8080"
     volumes:
