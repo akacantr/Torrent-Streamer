@@ -2740,8 +2740,18 @@ function bindEvents() {
     }
   });
 
+  el.video.addEventListener('canplaythrough', () => {
+    setLoading(false);
+  });
+
+  el.video.addEventListener('seeked', () => {
+    if (el.video.readyState >= 3) {
+      setLoading(false);
+    }
+  });
+
   el.video.addEventListener('waiting', () => {
-    if (el.video.getAttribute('src')) {
+    if (el.video.getAttribute('src') && el.video.readyState < 3) {
       setLoading(true, 'Tamponlanıyor...');
     }
   });
@@ -2759,6 +2769,9 @@ function bindEvents() {
   });
 
   el.video.addEventListener('timeupdate', () => {
+    if (!el.video.paused && el.video.readyState >= 3) {
+      setLoading(false);
+    }
     if (!state.isDraggingSeek) {
       updateTimeAndSeekUi();
     }

@@ -891,9 +891,9 @@ async function runProbe(infoHash: string, fileIndex: number, signal?: AbortSigna
         "-show_streams",
         "-show_chapters",
         "-probesize",
-        "20M",
+        "5M",
         "-analyzeduration",
-        "10M",
+        "5M",
         inputSource,
       ],
       stdout: "piped",
@@ -1301,14 +1301,18 @@ async function handlePlayRequest(
   const startSec = Number.isFinite(rawStart) && rawStart > 0 ? rawStart : 0;
 
   let sourceAudioChannels = 0;
-  let sourceAudioCodec = "";
-  try {
-    const probe = await runProbe(torrent.infoHash, fileIndex, requestSignal);
-    const track = probe.audio.find((a) => a.audioOrder === audioTrack) || probe.audio[audioTrack];
+  const cachedProbe = probeCache.get(`${torrent.infoHash.toLowerCase()}:${fileIndex}`);
+  if (cachedProbe) {
+    const track = cachedProbe.audio.find((a) => a.audioOrder === audioTrack) || cachedProbe.audio[audioTrack];
     sourceAudioChannels = track?.channels || 2;
-    sourceAudioCodec = (track?.codec || "").toLowerCase();
-  } catch {
-    sourceAudioChannels = 2;
+  } else if (audioMode === "stereo") {
+    try {
+      const probe = await runProbe(torrent.infoHash, fileIndex, requestSignal);
+      const track = probe.audio.find((a) => a.audioOrder === audioTrack) || probe.audio[audioTrack];
+      sourceAudioChannels = track?.channels || 2;
+    } catch {
+      sourceAudioChannels = 2;
+    }
   }
 
   if (requestSignal.aborted) {
@@ -1321,6 +1325,8 @@ async function handlePlayRequest(
     "-hide_banner",
     "-loglevel",
     "error",
+    "-fflags",
+    "+genpts",
   ];
   if (startSec > 0) {
     if (videoMode === "copy") {
@@ -1374,21 +1380,13 @@ async function handlePlayRequest(
         "-af",
         "pan=stereo|FL=0.5*FC+0.707*FL+0.707*BL+0.5*LFE|FR=0.5*FC+0.707*FR+0.707*BR+0.5*LFE,aresample=async=1",
       );
-    } else if (sourceAudioCodec === "aac" && sourceAudioChannels <= 2) {
-      args.push("-c:a", "copy");
     } else {
       args.push("-af", "aresample=async=1");
     }
-    if (!args.includes("-c:a")) {
-      args.push("-c:a", "aac", "-ac", "2", "-b:a", "256k");
-    }
+    args.push("-c:a", "aac", "-ac", "2", "-b:a", "256k");
   } else {
-    if (sourceAudioCodec === "aac" && sourceAudioChannels === 6) {
-      args.push("-c:a", "copy");
-    } else {
-      args.push("-af", "aresample=async=1");
-      args.push("-c:a", "aac", "-ac", "6", "-b:a", "640k");
-    }
+    args.push("-af", "aresample=async=1");
+    args.push("-c:a", "aac", "-ac", "6", "-b:a", "640k");
   }
 
   args.push("-muxdelay", "0", "-muxpreload", "0", "-f", "mp4", "-movflags", movflags, "pipe:1");
